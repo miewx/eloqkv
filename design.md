@@ -30,12 +30,85 @@
   - **默认命名空间（`default`）**：默认情况下，默认命名空间的数据是**无前缀的（prefixless）**，保持原生的 Key 编码。其数据直接路由至原有的物理数据库表（如 `data_table_0`, `data_table_1` 等）。
   - **自定义命名空间**：所有自定义命名空间共享单个物理表 `ns_data_table`。
     - 各自定义命名空间在 `ns_data_table` 内使用独特的 Base-255 编码前缀实现前缀隔离。
-    - 每个自定义命名空间都有唯一的 `uint64_t` 标识，前缀格式为 `[encoded_id] + \x00`。
-    - 由于 `\x00` 仅作为前缀分隔符，且 `EncodeBase255` 编码中排除 `\x00`，因此保证了各个命名空间 Key 之间的无碰撞与安全隔离。
+    - **自定义命名空间 Key 前缀格式**：
+      $$\text{Key Prefix} = \text{MAGIC (\xFF)} + \text{VERSION\_1 (\x01)} + \text{encoded\_ns\_id} + \text{Delimiter (\x00)} + \text{encoded\_epoch} + \text{Delimiter (\x00)}$$
+      - **`MAGIC`**：魔法前缀字节，固定为 `\xFF`。
+      - **`VERSION_1`**：版本标识，固定为 `\x01`。
+      - **`encoded_ns_id`**：租户 Namespace ID 经过 Base-255 编码后的字符串。由于 Base-255 编码排除了 `\x00` 字符，因此 `\x00` 可以安全作为分隔符。
+      - **`encoded_epoch`**：当前命名空间的 epoch（清除版本号），同样使用 Base-255 编码。
+    - 由于 `\x00` 作为前缀分隔符且与数据内容完全隔离，保证了各个命名空间 Key 之间的无碰撞与安全隔离。
 - **透明包装**：
   - `EloqKey` 在构造时通过 `CreateEloqStringFromNamespace` 透明地加上当前的命名空间前缀（对于默认命名空间不加前缀）。
-- **范围限制 (`ComposeNamespaceKeyNext`)**：
-  - 针对 `KEYS` / `SCAN` 范围查找，通过将起始 Key 定位为 `[encoded_id] + \x00`，结束 Key 定位为 `ComposeNamespaceKeyNext`（即 `[encoded_id] + \x01`），将检索边界严格限定在当前命名空间范围内。
+- **范围限制与上限边界计算 (`ComposeNamespaceKeyNext`)**：
+  - 针对 `KEYS` / `SCAN` 范围查找，通过将起始 Key 定位为当前租户的前缀（`prefix`），结束 Key 定位为 `ComposeNamespaceKeyNext(prefix)`（即调用 `NamespacePrefix::MakePrefixNext(prefix)`），将检索边界严格限定在当前命名空间和当前 Epoch 范围内。
+  - **上限边界计算原理**：`MakePrefixNext` 自后向前查找第一个非 `\xFF` 的字符将其加 1，并截断其后的部分，在 B-Tree 范围查询时用作排他的上限边界。
+
+### 1.3 核心实现代码说明
+
+```cpp
+// 1. Base-255 编码与解码实现 (include/b255_encode.h / src/b255_encode.cpp)
+// 将数字 ID 转换为不含 \x00 字符的 Base-255 字符串
+std::string EncodeBase255(uint64_t id)
+{
+    if (id == 0)
+    {
+        return std::string(1, '\x01');
+    }
+    std::string result;
+    uint64_t temp = id;
+    while (temp > 0)
+    {
+        uint64_t digit = temp % 255;
+        char c = static_cast<char>(digit + 1); // 加上偏移避开 \x00
+        result.push_back(c);
+        temp /= 255;
+    }
+    std::reverse(result.begin(), result.end());
+    return result;
+}
+
+// 2. 命名空间 Key 前缀构造 (include/namespace/prefix.h)
+namespace NamespacePrefix
+{
+    constexpr char MAGIC = '\xFF';
+    constexpr char VERSION_1 = '\x01';
+    constexpr char B255_DELIMITER = '\x00';
+
+    inline std::string MakePrefixV1(std::string_view encoded_ns_id, uint64_t epoch)
+    {
+        std::string prefix;
+        prefix.reserve(2 + encoded_ns_id.size() + 1 + 8 + 1);
+        prefix.push_back(MAGIC);
+        prefix.push_back(VERSION_1);
+        prefix.append(encoded_ns_id);
+        prefix.push_back(B255_DELIMITER);
+        prefix.append(EncodeBase255(epoch));
+        prefix.push_back(B255_DELIMITER);
+        return prefix;
+    }
+
+    // 3. 计算用于扫描的排他上限边界 Key (MakePrefixNext)
+    inline std::string MakePrefixNext(std::string_view prefix)
+    {
+        if (prefix.empty())
+        {
+            return "";
+        }
+        std::string next_prefix(prefix);
+        for (int i = static_cast<int>(next_prefix.size()) - 1; i >= 0; --i)
+        {
+            auto c = static_cast<unsigned char>(next_prefix[i]);
+            if (c != 0xFF)
+            {
+                next_prefix[i] = static_cast<char>(c + 1);
+                next_prefix.resize(i + 1);
+                return next_prefix;
+            }
+        }
+        return "";
+    }
+}
+```
 
 ---
 
