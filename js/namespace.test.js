@@ -76,7 +76,8 @@ beforeAll(async () => {
     .replace(/requirepass\s*=\s*$/, "requirepass = " + REQUIRE_PASS)
     .replace(/#\s*namespace\s*=\s*\w+/, "namespace = true")
     .replace(/namespace\s*=\s*\w+/, "namespace = true")
-    .replace(/eloq_data_path\s*=\s*\S+/, "eloq_data_path = " + DATA_DIR);
+    .replace(/eloq_data_path\s*=\s*\S+/, "eloq_data_path = " + DATA_DIR)
+    .replace(/enable_io_uring\s*=\s*\S+/, "enable_io_uring = off");
 
   if (!test_config.includes("port = " + TEST_PORT)) {
     test_config += "\nport = " + TEST_PORT + "\n";
