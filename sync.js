@@ -135,21 +135,13 @@ const repo_root = import.meta.dirname,
     // 8. 进入临时工作区提交代码
     await temp_git.add("-A");
 
-    let has_changes = true;
-    try {
-      await temp_git.diff(["--quiet", "--cached"]);
-      has_changes = false;
-    } catch {
-      // Non-zero exit code means there are changes
-    }
+    const diff_text = await temp_git.diff(["--cached"]);
 
-    if (!has_changes) {
+    if (!diff_text.trim()) {
       console.log("没有检测到任何文件变化，无需提交。");
       fs.writeFileSync(path.join(temp_dir, ".no_changes"), "");
     } else {
       console.log("正在基于代码提交更改...");
-
-      const diff_text = await temp_git.diff(["--cached"]);
       console.log("[信息] 正在请求 Opencode SDK 自动生成提交消息...");
       try {
         const commit_msg = await ai(diff_text);
