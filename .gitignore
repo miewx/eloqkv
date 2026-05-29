@@ -82,3 +82,4 @@ eloq_log_service
 install
 .sync_worktree_*
 
+.tmp/

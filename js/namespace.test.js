@@ -2,7 +2,7 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { RedisClient as BunRedisClient } from "bun";
 import { $ } from "zx";
-import { readFileSync, writeFileSync, existsSync, unlinkSync, rmSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, unlinkSync, rmSync, mkdirSync } from "fs";
 import { cpus } from "os";
 
 class RedisClient {
