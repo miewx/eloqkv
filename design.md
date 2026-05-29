@@ -31,7 +31,20 @@
   - **自定义命名空间**：所有自定义命名空间共享单个物理表 `ns_data_table`。
     - 各自定义命名空间在 `ns_data_table` 内使用独特的 Base-255 编码前缀实现前缀隔离。
     - **自定义命名空间 Key 前缀格式**：
-      $$\text{Key Prefix} = \text{MAGIC (\xFF)} + \text{VERSION\_1 (\x01)} + \text{encoded\_ns\_id} + \text{Delimiter (\x00)} + \text{encoded\_epoch} + \text{Delimiter (\x00)}$$
+      ```
+      Key Prefix = MAGIC (\xFF) + VERSION_1 (\x01) + encoded_ns_id + Delimiter (\x00) + encoded_epoch + Delimiter (\x00)
+      ```
+
+      ```mermaid
+      graph LR
+          MAGIC["MAGIC (1B: \\xFF)"] --> VERSION["VERSION (1B: \\x01)"]
+          VERSION --> NS_ID["encoded_ns_id (Base-255 string)"]
+          NS_ID --> DELIM1["Delimiter (1B: \\x00)"]
+          DELIM1 --> EPOCH["encoded_epoch (Base-255 string)"]
+          EPOCH --> DELIM2["Delimiter (1B: \\x00)"]
+          DELIM2 --> USER_KEY["User Key (raw string)"]
+      ```
+
       - **`MAGIC`**：魔法前缀字节，固定为 `\xFF`。
       - **`VERSION_1`**：版本标识，固定为 `\x01`。
       - **`encoded_ns_id`**：租户 Namespace ID 经过 Base-255 编码后的字符串。由于 Base-255 编码排除了 `\x00` 字符，因此 `\x00` 可以安全作为分隔符。
@@ -131,7 +144,47 @@ namespace NamespacePrefix
 `RedisServiceImpl` 提供了全套的事务安全管理接口，包括添加、修改、删除和扫描列表。在删除与清理操作中实现了**级联数据清空与隔离清理**：
 - **元数据删除**：首先从 `__namespace` 系统表中删除口令、ID以及名称的双向映射记录。
 - **级联 Key 数据清空**：自定义命名空间删除时，只需针对共享的 `ns_data_table` 单个物理表进行范围扫描（边界限定在 `[ns_prefix, ns_prefix_next)` 内，即以该命名空间编码 ID 为前缀的所有租户 Key），并将扫描到的记录批量在同一个事务内全部删除，实现彻底的数据原子级级联清空。
-- **租户级独立清理 (`FLUSHDB` / `FLUSHALL`)**：对于自定义命名空间，`FLUSHDB` 和 `FLUSHALL` 命令被拦截为逻辑清理，而非直接 Truncate 物理表。系统同样在 `ns_data_table` 表内进行前缀范围扫描，批量删除该命名空间下的所有 Key，并利用事务级元数据计数器重置 Key 计数，从而保证了清理操作对其他租户完全透明且互不干扰。
+- **租户级独立清理 (`FLUSHDB` / `FLUSHALL`) 与异步 GC 流程**：对于自定义命名空间，`FLUSHDB` 和 `FLUSHALL` 命令被拦截为**逻辑删除**，而非同步 Truncate 物理表，从而避免阻塞主处理流程。
+  - **工作流与序列图**：
+    
+    ```mermaid
+    sequenceDiagram
+        autonumber
+        actor Client
+        participant ConnectionContext as Connection Context (in-memory)
+        participant ExecuteFlushDB as ExecuteFlushDBCommand
+        participant DB as Database (__namespace Table & ns_data_table)
+        participant GCDaemon as NamespaceGCDaemon (Background Thread)
+
+        %% Phase 1: Logical Flush
+        Client->>ExecuteFlushDB: Send FLUSHDB / FLUSHALL (Custom Namespace)
+        Note over ExecuteFlushDB: Read old_epoch from ns_meta
+        ExecuteFlushDB->>DB: [Tx 1] Set "e:<encoded_ns_id>" = new_epoch (old_epoch + 1)
+        ExecuteFlushDB->>DB: [Tx 1] Set "g:<encoded_ns_id>:<old_epoch>" = "1" (GC Record)
+        DB-->>ExecuteFlushDB: [Tx 1] Commit Success
+        ExecuteFlushDB->>ConnectionContext: Update memory epoch cache (release fence)
+        ExecuteFlushDB-->>Client: Return "OK" (Logical Delete Complete)
+
+        %% Phase 2: Asynchronous GC
+        loop Regular Interval (bthread_usleep)
+            GCDaemon->>DB: [Scan Tx] Scan GC records matching "g:*" to "g;"
+            DB-->>GCDaemon: Return GC records list
+            alt GC records not empty
+                loop For each record (g:<ns_id>:<old_epoch>)
+                    Note over GCDaemon: Resolve prefix = MakePrefixV1(ns_id, old_epoch)
+                    loop Batch Scan and Delete
+                        GCDaemon->>DB: [Scan Tx] Scan keys with prefix
+                        DB-->>GCDaemon: Return batch of keys
+                        GCDaemon->>DB: [Write Tx] Delete batch of keys in ns_data_table
+                        DB-->>GCDaemon: Commit Success
+                        Note over GCDaemon: Throttling sleep (5ms)
+                    end
+                    GCDaemon->>DB: [Write Tx] Delete GC record "g:<ns_id>:<old_epoch>"
+                    DB-->>GCDaemon: Commit Success
+                end
+            end
+        end
+    ```
 - **对象生命周期延伸**：为避免悬空指针（UAF）风险，所有参与事务的 `EloqKey`、`Command` 及 `TxRequest`（包括大批量级联删除或 FLUSHDB 批量删除创建的临时对象）其生命周期均通过容器进行严格的生命周期延伸绑定，保证在 `CommitTx` 完成前绝对不被析构。
 
 ---
