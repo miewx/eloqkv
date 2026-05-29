@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <string_view>
+#include <optional>
+#include <limits>
 
 namespace EloqKV
 {
@@ -25,12 +27,25 @@ std::string EncodeBase255(uint64_t id)
     return result;
 }
 
-uint64_t DecodeBase255(std::string_view s)
+std::optional<uint64_t> DecodeBase255(std::string_view s)
 {
+    if (s.empty())
+    {
+        return std::nullopt;
+    }
     uint64_t id = 0;
     for (char c : s)
     {
-        uint64_t digit = static_cast<unsigned char>(c) - 1;
+        unsigned char uc = static_cast<unsigned char>(c);
+        if (uc < 1)
+        {
+            return std::nullopt;
+        }
+        uint64_t digit = uc - 1;
+        if (id > (std::numeric_limits<uint64_t>::max() - digit) / 255)
+        {
+            return std::nullopt;
+        }
         id = id * 255 + digit;
     }
     return id;

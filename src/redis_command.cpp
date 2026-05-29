@@ -1498,7 +1498,7 @@ void AuthCommand::Execute(RedisServiceImpl *redis_impl,
         ctx->authenticated = true;
         ctx->ns = ns_meta->ns_name;
         ctx->ns_meta = ns_meta;
-        ctx->ns_id = NamespacePrefix::MakePrefixV1(ns_meta->encoded_id, ns_meta->epoch.load(std::memory_order_relaxed));
+        ctx->ns_id = NamespacePrefix::MakePrefix(ns_meta->encoded_id, ns_meta->epoch.load(std::memory_order_relaxed));
     }
     else if (password_ == requirepass)
     {
@@ -10572,7 +10572,8 @@ std::tuple<bool, NamespaceCommand> ParseNamespaceCommand(
         return {false, NamespaceCommand()};
     }
     std::string subcommand(args[1]);
-    std::transform(subcommand.begin(), subcommand.end(), subcommand.begin(), ::tolower);
+    std::transform(subcommand.begin(), subcommand.end(), subcommand.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
 
     if (args.size() == 2 && subcommand == "current")
     {
