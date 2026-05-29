@@ -20,9 +20,52 @@
  *
  */
 #include "eloqkv_key.h"
+#include <bthread/bthread.h>
+#include <mutex>
 
 namespace EloqKV
 {
+
+static bthread_key_t ns_bthread_key;
+static std::once_flag ns_bthread_key_once;
+static bool bthread_key_initialized = false;
+
+static void destroy_ns(void* ptr)
+{
+    delete static_cast<std::string*>(ptr);
+}
+
+static void InitializeBthreadNamespaceKey()
+{
+    std::call_once(ns_bthread_key_once, []() {
+        if (bthread_key_create(&ns_bthread_key, destroy_ns) == 0)
+        {
+            bthread_key_initialized = true;
+        }
+    });
+}
+
+std::string& GetCurrentNamespace()
+{
+    InitializeBthreadNamespaceKey();
+
+    if (!bthread_key_initialized || bthread_self() == 0)
+    {
+        thread_local std::string fallback_ns = "default";
+        return fallback_ns;
+    }
+
+    void* ptr = bthread_getspecific(ns_bthread_key);
+    if (ptr == nullptr)
+    {
+        std::string* ns_ptr = new std::string("default");
+        bthread_setspecific(ns_bthread_key, ns_ptr);
+        return *ns_ptr;
+    }
+    return *static_cast<std::string*>(ptr);
+}
+
+bool enable_namespace = false;
 static const uint16_t crc16_table[256] = {
     0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7, 0x8108,
     0x9129, 0xa14a, 0xb16b, 0xc18c, 0xd1ad, 0xe1ce, 0xf1ef, 0x1231, 0x0210,

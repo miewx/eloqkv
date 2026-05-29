@@ -25,25 +25,89 @@
 #include <string_view>
 #include <vector>
 
+#include <stdexcept>
 #include "eloq_string.h"
 #include "redis_string_match.h"
 #include "tx_key.h"
 
 namespace EloqKV
 {
-
 uint16_t CRC16_XMODEM(const char *ptr, int32_t len);
+
+std::string& GetCurrentNamespace();
+#define current_namespace GetCurrentNamespace()
+extern bool enable_namespace;
+
+inline std::string ComposeNamespaceKey(std::string_view ns, std::string_view key)
+{
+    if (!enable_namespace || ns.empty())
+    {
+        return std::string(key);
+    }
+    std::string_view actual_ns = ns;
+    if (actual_ns == "default")
+    {
+        static const std::string default_ns_prefix = std::string(1, '\x01') + std::string(1, '\x00');
+        actual_ns = default_ns_prefix;
+    }
+    std::string ns_key;
+    ns_key.reserve(actual_ns.size() + key.size());
+    ns_key.append(actual_ns);
+    ns_key.append(key);
+    return ns_key;
+}
+
+inline std::string ComposeNamespaceKeyNext(std::string_view ns)
+{
+    if (!enable_namespace || ns.empty())
+    {
+        return "";
+    }
+    std::string_view actual_ns = ns;
+    if (actual_ns == "default")
+    {
+        static const std::string default_ns_prefix = std::string(1, '\x01') + std::string(1, '\x00');
+        actual_ns = default_ns_prefix;
+    }
+    std::string ns_prefix(actual_ns);
+    for (int i = static_cast<int>(ns_prefix.size()) - 1; i >= 0; --i)
+    {
+        auto c = static_cast<unsigned char>(ns_prefix[i]);
+        if (c != 0xFF)
+        {
+            ns_prefix[i] = static_cast<char>(c + 1);
+            ns_prefix.resize(i + 1);
+            return ns_prefix;
+        }
+    }
+    return "";
+}
+
+inline std::string ApplyNamespace(std::string_view key)
+{
+    return ComposeNamespaceKey(current_namespace, key);
+}
+
+inline EloqString CreateEloqStringFromNamespace(std::string_view key)
+{
+    if (!enable_namespace)
+    {
+        return EloqString(key);
+    }
+    std::string ns_key = ApplyNamespace(key);
+    return EloqString(ns_key.data(), ns_key.size());
+}
 
 class EloqKey
 {
 public:
     EloqKey() = default;
 
-    EloqKey(const char *key_buf, size_t key_len) : key_(key_buf, key_len)
+    EloqKey(const char *key_buf, size_t key_len) : key_(CreateEloqStringFromNamespace(std::string_view(key_buf, key_len)))
     {
     }
 
-    EloqKey(std::string_view str_view) : key_(str_view)
+    EloqKey(std::string_view str_view) : key_(CreateEloqStringFromNamespace(str_view))
     {
     }
 

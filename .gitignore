@@ -1,3 +1,8 @@
+node_modules/
+.antigravitycli/
+.codegraph/
+braft/
+
 *.code-workspace
 .codex
 .cursor
@@ -7,6 +12,7 @@
 .root
 .DS_Store
 .cache
+.ccache/
 .clangd
 .cursor
 

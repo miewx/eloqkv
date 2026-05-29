@@ -108,6 +108,21 @@ bool INIReader::HasValue(const string &section, const string &name) const
     return _values.count(key);
 }
 
+std::map<string, string> INIReader::GetSectionValues(const string &section) const
+{
+    std::map<string, string> result;
+    string prefix = section + "=";
+    std::transform(prefix.begin(), prefix.end(), prefix.begin(), ::tolower);
+    for (const auto &pair : _values)
+    {
+        if (pair.first.compare(0, prefix.length(), prefix) == 0)
+        {
+            result.emplace(pair.first.substr(prefix.length()), pair.second);
+        }
+    }
+    return result;
+}
+
 string INIReader::MakeKey(const string &section, const string &name)
 {
     string key = section + "=" + name;

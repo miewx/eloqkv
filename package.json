@@ -1,0 +1,10 @@
+{
+  "type": "module",
+  "dependencies": {
+    "zx": "^8.8.5"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.52.0",
+    "oxlint": "^1.67.0"
+  }
+}

@@ -70,6 +70,10 @@ public:
           pub_sub_mgr(mgr)
     {
         RedisStats::IncrConnReceived();
+        if (enable_namespace)
+        {
+            ns_id = std::string(1, '\x01') + std::string(1, '\x00');
+        }
     }
 
     ~RedisConnectionContext() override;
@@ -112,6 +116,8 @@ public:
     bool authenticated{false};
 
     int db_id{0};
+    std::string ns{"default"};
+    std::string ns_id{""};
 
     int64_t connect_time_us{0};
     size_t scan_cursor_cnt{0};
