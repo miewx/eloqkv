@@ -1,13 +1,17 @@
 #!/usr/bin/env bun
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { RedisClient as BunRedisClient } from "bun";
+import Redis from "ioredis";
 import { $ } from "zx";
 import { readFileSync, writeFileSync, existsSync, unlinkSync, rmSync } from "fs";
 import { cpus } from "os";
 
 class RedisClient {
   constructor(url) {
-    this.client = new BunRedisClient(url);
+    this.client = new Redis(url, {
+      maxRetriesPerRequest: 0,
+      showFriendlyErrorStack: true,
+      lazyConnect: true,
+    });
   }
 
   async connect() {
@@ -16,11 +20,11 @@ class RedisClient {
 
   async send(cmd, args = []) {
     const flatArgs = args.map(arg => String(arg));
-    return await this.client.send(cmd, flatArgs);
+    return await this.client.call(cmd, ...flatArgs);
   }
 
   close() {
-    this.client.close();
+    this.client.disconnect();
   }
 }
 
@@ -132,7 +136,7 @@ beforeAll(async () => {
       } finally {
         test_client.close();
       }
-    } catch {
+    } catch (err) {
       // 忽略：套接字错误时重试
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
