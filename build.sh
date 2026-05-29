@@ -15,5 +15,9 @@ mkdir -p build
 cd build
 
 cmake -DWITH_LOG_SERVICE=ON ..
-make -j$(nproc)
+NUM_PROCS=$(nproc)
+if [ "$NUM_PROCS" -gt 4 ]; then
+  NUM_PROCS=4
+fi
+make -j"$NUM_PROCS"
 chmod +x eloqkv
