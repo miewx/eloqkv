@@ -6,7 +6,7 @@
 namespace EloqKV
 {
 
-constexpr char NAMESPACE_DELIMITER = '\x00';
+constexpr char B255_DELIMITER = '\x00';
 
 /**
  * Encodes a numeric namespace ID into a base-255 string using characters starting from \x01.

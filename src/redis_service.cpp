@@ -6496,7 +6496,7 @@ std::string RedisServiceImpl::GetNamespaceFromTokenFromDB(std::string_view token
 
     if (token == requirepass && !requirepass.empty())
     {
-        ns_id = std::string(1, '\x01') + std::string(1, NAMESPACE_DELIMITER);
+        ns_id = std::string(1, '\x01') + std::string(1, B255_DELIMITER);
         return "default";
     }
 
@@ -6520,7 +6520,7 @@ std::string RedisServiceImpl::GetNamespaceFromTokenFromDB(std::string_view token
     if (success && cmd.result_.err_code_ == RD_OK)
     {
         std::string encoded_id = cmd.result_.str_;
-        ns_id = encoded_id + std::string(1, NAMESPACE_DELIMITER);
+        ns_id = encoded_id + std::string(1, B255_DELIMITER);
 
         old_ns = std::move(current_namespace);
         current_namespace = "";
@@ -6890,7 +6890,7 @@ bool RedisServiceImpl::DelNamespaceFromDB(std::string_view ns)
     // Cascade delete all keys in the namespace across all tables
     if (!encoded_id.empty())
     {
-        std::string ns_prefix = encoded_id + std::string(1, NAMESPACE_DELIMITER);
+        std::string ns_prefix = encoded_id + std::string(1, B255_DELIMITER);
         std::string ns_prefix_next = ComposeNamespaceKeyNext(ns_prefix);
 
         const TableName &table_name = *ns_data_table_name_;

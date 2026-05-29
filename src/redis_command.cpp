@@ -1504,7 +1504,7 @@ void AuthCommand::Execute(RedisServiceImpl *redis_impl,
         result_.err_code_ = RD_OK;
         ctx->authenticated = true;
         ctx->ns = "default";
-        ctx->ns_id = EncodeBase255(0) + std::string(1, NAMESPACE_DELIMITER);
+        ctx->ns_id = EncodeBase255(0) + std::string(1, B255_DELIMITER);
     }
     else
     {
