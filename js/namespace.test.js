@@ -91,22 +91,26 @@ class RedisClient {
     const type = this.buffer[0];
     const line = this.buffer.toString("utf8", 1, idx);
 
-    if (type === 43) { // '+'
+    if (type === 43) {
+      // '+'
       this.buffer = this.buffer.subarray(idx + 2);
       return { value: line };
     }
 
-    if (type === 45) { // '-'
+    if (type === 45) {
+      // '-'
       this.buffer = this.buffer.subarray(idx + 2);
       return { error: new Error(line) };
     }
 
-    if (type === 58) { // ':'
+    if (type === 58) {
+      // ':'
       this.buffer = this.buffer.subarray(idx + 2);
       return { value: parseInt(line) };
     }
 
-    if (type === 36) { // '$'
+    if (type === 36) {
+      // '$'
       const len = parseInt(line);
       if (len === -1) {
         this.buffer = this.buffer.subarray(idx + 2);
@@ -118,7 +122,8 @@ class RedisClient {
       return { value: val };
     }
 
-    if (type === 42) { // '*'
+    if (type === 42) {
+      // '*'
       const count = parseInt(line);
       if (count === -1) {
         this.buffer = this.buffer.subarray(idx + 2);
@@ -439,10 +444,7 @@ describe("EloqKV 命名空间隔离与管理", () => {
     expect(rm_res).toBe("OK");
 
     // 校验级联删除后，使用原有 token 建立新连接认证被拒绝
-    await expectToFail(
-      authClient(token),
-      "invalid username-password pair",
-    );
+    await expectToFail(authClient(token), "invalid username-password pair");
   });
 
   test("命名空间下 FLUSHDB 数据隔离与清空", async () => {
@@ -528,10 +530,7 @@ describe("EloqKV 命名空间隔离与管理", () => {
     await default_client.send("SELECT", [0]);
 
     // 自定义命名空间禁止 SELECT
-    await expectToFail(
-      ns_client.send("SELECT", [1]),
-      "SELECT is not allowed in custom namespace",
-    );
+    await expectToFail(ns_client.send("SELECT", [1]), "SELECT is not allowed in custom namespace");
 
     await default_client.send("namespace", ["del", [ns_name]]);
   });
@@ -611,7 +610,7 @@ describe("EloqKV 命名空间隔离与管理", () => {
 
   test("并发 AUTH 不同的命名空间以验证连接与事务隔离安全性", async () => {
     using default_client = await authClient();
-    
+
     // 批量添加多个命名空间
     const tokens = await Promise.all([
       default_client.send("namespace", ["add", "ns_concurrent_1"]),
@@ -630,17 +629,16 @@ describe("EloqKV 命名空间隔离与管理", () => {
     };
 
     // 并发认证
-    const clients = await Promise.all(tokens.map(t => authClient(t)));
-    
+    const clients = await Promise.all(tokens.map((t) => authClient(t)));
+
     await using _clients_cleanup = {
       [Symbol.asyncDispose]: async () => {
-        clients.forEach(c => c.close());
-      }
+        clients.forEach((c) => c.close());
+      },
     };
 
     // 并发验证
-    const current_nss = await Promise.all(clients.map(c => c.send("namespace", ["current"])));
+    const current_nss = await Promise.all(clients.map((c) => c.send("namespace", ["current"])));
     expect(current_nss).toEqual(["ns_concurrent_1", "ns_concurrent_2", "ns_concurrent_3"]);
   });
 });
-
