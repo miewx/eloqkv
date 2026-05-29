@@ -2275,8 +2275,8 @@ void DBSizeCommand::Execute(RedisServiceImpl *redis_impl,
         }
         uint64_t schema_version = catalog_rec.SchemaTs();
 
-        EloqKey start_key(ns_prefix, false);
-        EloqKey end_key(ns_prefix_next, false);
+        EloqKey start_key = EloqKey::Raw(ns_prefix);
+        EloqKey end_key = EloqKey::Raw(ns_prefix_next);
 
         TxKey start_tx_key(&start_key);
         TxKey end_tx_key(&end_key);

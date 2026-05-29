@@ -41,7 +41,7 @@
 
 ## 2. 命名空间持久化与数据字典 (Persistence & Metadata Schema)
 
-命名空间的注册 and 解析数据由专用的内部系统表 `__namespace` 承载，该表同样支持多版本并发控制与事务安全。
+命名空间的注册与解析数据由专用的内部系统表 `__namespace` 承载，该表同样支持多版本并发控制与事务安全。
 
 ### 2.1 元数据键值映射
 在 `__namespace` 系统表中维护着四类核心键值对：
@@ -84,7 +84,7 @@
 | :--- | :--- | :--- | :--- |
 | `NAMESPACE CURRENT` | 获取当前客户端连接绑定的命名空间名称。 | 任意已认证客户端 | 字符串（如 `default` 或自定义命名空间名称） |
 | `NAMESPACE GET <ns>` | 查询指定命名空间的认证 Token。 | 仅限 `default` 空间管理员 | 字符串（该空间的 Token）或返回 `ERR namespace not found` |
-| `NAMESPACE GET *` | 列出系统中所有的命名空间及其对应的 Token（扁平化数组）。 | 仅限 `default` 空间管理员 | 数组（如 `[ns1, token1, ns2, token2, default, requirepass]` |
+| `NAMESPACE GET *` | 列出系统中所有的自定义命名空间及其对应的 Token（扁平化数组）。 | 仅限 `default` 空间管理员 | 扁平化数组（如 `[ns1, token1, ns2, token2]`） |
 | `NAMESPACE ADD <ns>` | 创建一个新的命名空间。系统会自动生成一个 Base64Url 格式的 Token。 | 仅限 `default` 空间管理员 | 字符串（新生成的 Token）或返回 `ERR the namespace already exists` |
 | `NAMESPACE REFRESH <ns>` | 为已存在的命名空间重新生成并更新 Token。 | 仅限 `default` 空间管理员 | 字符串（新生成的 Token）或返回 `ERR namespace not found` |
 | `NAMESPACE DEL <ns>` | 删除指定的命名空间及其所有映射，并且会自动级联清空删除该命名空间下的所有用户 Key 数据。 | 仅限 `default` 空间管理员 | 状态字符串 `OK` 或返回 `ERR namespace not found` |
@@ -107,11 +107,11 @@
 - **管理器功能 (`TestNamespaceManager`)**：验证内存缓存模式下的 `Add`, `Set`, `Del`, `GetByToken`, `List` 操作，测试唯一性限制。
 - **前缀与隔离验证 (`TestNamespacePrefixing`)**：
   - 验证默认空间是无前缀的（prefixless），而自定义空间则使用其编码后的命名空间 ID 作为前缀（例如首个自定义空间的编码前缀为双字节 `\x02\x00`）。
-  - 验证 B 树范围扫描 of 辅助边界计算（如 `ComposeNamespaceKeyNext("\x02\x00")` 返回 `\x02\x01`），确立严密的租户检索边界。
+  - 验证 B 树范围扫描与辅助边界计算（如 `ComposeNamespaceKeyNext("\x02\x00")` 返回 `\x02\x01`），确立严密的租户检索边界。
 
 ### 5.2 客户端协议集成测试 ([namespace.test.js](./js/namespace.test.js))
 集成测试模拟真实客户端，校验 Redis 协议交互及租户命令隔离权限：
 - **子指令全覆盖**：测试全部的命名空间管理命令（`NAMESPACE CURRENT/ADD/GET/REFRESH/DEL`）。
 - **数据物理隔离**：验证两个客户端分别在 `default` 和租户命名空间下操作同名的 `shared_key`，默认空间下对应的底层 Key 为无前缀的 `shared_key`，而租户空间下对应的底层 Key 带有其编码后的前缀（如 `\x02\x00shared_key`），互不干扰、独立读写。
 - **越权防御**：验证非管理员租户尝试调用 `NAMESPACE ADD` 或 `NAMESPACE GET *` 管理指令时，是否能被系统正确拒绝并返回相应权限错误信息。
-- **级联删除校验**：通过在租户空间下写入多个 Key，然后在默认空间下执行 `NAMESPACE DEL` 级联删除该空间，最后验证系统全局 `DBSIZE` 是否精确减少了写入 of 租户 Key 数量。
+- **级联删除校验**：通过在租户空间下写入多个 Key，然后在默认空间下执行 `NAMESPACE DEL` 级联删除该空间，最后验证系统全局 `DBSIZE` 是否精确减少了写入的租户 Key 数量。

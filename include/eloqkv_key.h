@@ -83,19 +83,45 @@ inline EloqString CreateEloqStringFromNamespace(std::string_view key)
 
 class EloqKey
 {
-public:
-    EloqKey() = default;
-
-    EloqKey(const char *key_buf, size_t key_len, bool apply_namespace = true)
-        : key_(apply_namespace ? CreateEloqStringFromNamespace(std::string_view(key_buf, key_len))
-                               : EloqString(key_buf, key_len))
+private:
+    explicit EloqKey(EloqString key) : key_(std::move(key))
     {
     }
 
-    EloqKey(std::string_view str_view, bool apply_namespace = true)
-        : key_(apply_namespace ? CreateEloqStringFromNamespace(str_view)
-                               : EloqString(str_view))
+public:
+    EloqKey() = default;
+
+    // Delegated constructor
+    EloqKey(const char *key_buf, size_t key_len)
+        : EloqKey(std::string_view(key_buf, key_len))
     {
+    }
+
+    // Base constructor: performs deep copy on apply_namespace = false
+    EloqKey(std::string_view str_view)
+        : key_(CreateEloqStringFromNamespace(str_view))
+    {
+    }
+
+    // Static factory methods
+    static EloqKey FromNamespace(std::string_view str_view)
+    {
+        return EloqKey(CreateEloqStringFromNamespace(str_view));
+    }
+
+    static EloqKey FromNamespace(const char *key_buf, size_t key_len)
+    {
+        return EloqKey(CreateEloqStringFromNamespace(std::string_view(key_buf, key_len)));
+    }
+
+    static EloqKey Raw(std::string_view str_view)
+    {
+        return EloqKey(EloqString(str_view.data(), str_view.size()));
+    }
+
+    static EloqKey Raw(const char *key_buf, size_t key_len)
+    {
+        return EloqKey(EloqString(key_buf, key_len));
     }
 
 
@@ -425,7 +451,7 @@ public:
     static const EloqKey *PackedNegativeInfinity()
     {
         static char neg_inf_packed_key = 0x00;
-        static const EloqKey neg_inf_key(&neg_inf_packed_key, 1, false);
+        static const EloqKey neg_inf_key = EloqKey::Raw(&neg_inf_packed_key, 1);
         return &neg_inf_key;
     }
 

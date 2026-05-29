@@ -6470,7 +6470,7 @@ std::string RedisServiceImpl::GetNamespaceTokenFromDB(std::string_view ns)
     TransactionExecution *txm = NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
     if (txm == nullptr) return "";
 
-    EloqKey db_key("n:" + std::string(ns), false);
+    EloqKey db_key = EloqKey::Raw("n:" + std::string(ns));
 
     GetCommand cmd;
     ObjectCommandTxRequest tx_req(namespace_table_name_.get(), &db_key, &cmd, /*auto_commit=*/false, /*always_redirect=*/true, txm);
@@ -6504,7 +6504,7 @@ std::string RedisServiceImpl::GetNamespaceFromTokenFromDB(std::string_view token
     std::unique_ptr<GetCommand> cmd_i;
     std::unique_ptr<ObjectCommandTxRequest> tx_req_i;
 
-    EloqKey db_key("t:" + std::string(token), false);
+    EloqKey db_key = EloqKey::Raw("t:" + std::string(token));
 
     GetCommand cmd;
     ObjectCommandTxRequest tx_req(namespace_table_name_.get(), &db_key, &cmd, /*auto_commit=*/false, /*always_redirect=*/true, txm);
@@ -6516,7 +6516,7 @@ std::string RedisServiceImpl::GetNamespaceFromTokenFromDB(std::string_view token
         std::string encoded_id = cmd.result_.str_;
         ns_id = encoded_id + std::string{B255_DELIMITER};
 
-        i_key = std::make_unique<EloqKey>("i:" + encoded_id, false);
+        i_key = std::make_unique<EloqKey>(EloqKey::Raw("i:" + encoded_id));
 
         cmd_i = std::make_unique<GetCommand>();
         tx_req_i = std::make_unique<ObjectCommandTxRequest>(namespace_table_name_.get(), i_key.get(), cmd_i.get(), /*auto_commit=*/false, /*always_redirect=*/true, txm);
@@ -6537,8 +6537,8 @@ bool RedisServiceImpl::AddNamespaceToDB(std::string_view ns, std::string_view to
     if (txm == nullptr) return false;
 
     // Check if ns already exists
-    EloqKey check_ns_key("n:" + std::string(ns), false);
-    EloqKey check_token_key("t:" + std::string(token), false);
+    EloqKey check_ns_key = EloqKey::Raw("n:" + std::string(ns));
+    EloqKey check_token_key = EloqKey::Raw("t:" + std::string(token));
 
     GetCommand cmd_ns;
     ObjectCommandTxRequest tx_req_ns(namespace_table_name_.get(), &check_ns_key, &cmd_ns, /*auto_commit=*/false, /*always_redirect=*/true, txm);
@@ -6570,7 +6570,7 @@ bool RedisServiceImpl::AddNamespaceToDB(std::string_view ns, std::string_view to
     }
 
     // Get next ID
-    EloqKey next_id_key(std::string_view("next_id"), false);
+    EloqKey next_id_key = EloqKey::Raw(std::string_view("next_id"));
 
     GetCommand cmd_id;
     ObjectCommandTxRequest tx_req_id(namespace_table_name_.get(), &next_id_key, &cmd_id, /*auto_commit=*/false, /*always_redirect=*/true, txm);
@@ -6628,7 +6628,7 @@ bool RedisServiceImpl::AddNamespaceToDB(std::string_view ns, std::string_view to
     }
 
     // Write i:<encoded_id> = ns
-    EloqKey i_key("i:" + encoded_id, false);
+    EloqKey i_key = EloqKey::Raw("i:" + encoded_id);
 
     SetCommand cmd_set_i(ns);
     ObjectCommandTxRequest tx_req_set_i(namespace_table_name_.get(), &i_key, &cmd_set_i, /*auto_commit=*/false, /*always_redirect=*/true, txm);
@@ -6660,7 +6660,7 @@ bool RedisServiceImpl::SetNamespaceInDB(std::string_view ns, std::string_view to
     std::unique_ptr<ObjectCommandTxRequest> tx_req_set_id;
 
     // Check if token already exists and is occupied by another namespace
-    EloqKey check_token_key("t:" + std::string(token), false);
+    EloqKey check_token_key = EloqKey::Raw("t:" + std::string(token));
 
     GetCommand cmd_token;
     ObjectCommandTxRequest tx_req_token(namespace_table_name_.get(), &check_token_key, &cmd_token, /*auto_commit=*/false, /*always_redirect=*/true, txm);
@@ -6673,7 +6673,7 @@ bool RedisServiceImpl::SetNamespaceInDB(std::string_view ns, std::string_view to
     if (cmd_token.result_.err_code_ == RD_OK)
     {
         std::string existing_encoded_id = cmd_token.result_.str_;
-        owner_i_key = std::make_unique<EloqKey>("i:" + existing_encoded_id, false);
+        owner_i_key = std::make_unique<EloqKey>(EloqKey::Raw("i:" + existing_encoded_id));
 
         cmd_owner = std::make_unique<GetCommand>();
         tx_req_owner = std::make_unique<ObjectCommandTxRequest>(namespace_table_name_.get(), owner_i_key.get(), cmd_owner.get(), /*auto_commit=*/false, /*always_redirect=*/true, txm);
@@ -6694,7 +6694,7 @@ bool RedisServiceImpl::SetNamespaceInDB(std::string_view ns, std::string_view to
     }
 
     // Get old token and ID
-    EloqKey check_ns_key("n:" + std::string(ns), false);
+    EloqKey check_ns_key = EloqKey::Raw("n:" + std::string(ns));
 
     GetCommand cmd_ns;
     ObjectCommandTxRequest tx_req_ns(namespace_table_name_.get(), &check_ns_key, &cmd_ns, /*auto_commit=*/false, /*always_redirect=*/true, txm);
@@ -6715,7 +6715,7 @@ bool RedisServiceImpl::SetNamespaceInDB(std::string_view ns, std::string_view to
             return true;
         }
 
-        EloqKey old_token_key("t:" + old_token, false);
+        EloqKey old_token_key = EloqKey::Raw("t:" + old_token);
 
         GetCommand cmd_old_t;
         ObjectCommandTxRequest tx_req_old_t(namespace_table_name_.get(), &old_token_key, &cmd_old_t, /*auto_commit=*/false, /*always_redirect=*/true, txm);
@@ -6737,7 +6737,7 @@ bool RedisServiceImpl::SetNamespaceInDB(std::string_view ns, std::string_view to
 
     if (encoded_id.empty())
     {
-        next_id_key = std::make_unique<EloqKey>(std::string_view("next_id"), false);
+        next_id_key = std::make_unique<EloqKey>(EloqKey::Raw(std::string_view("next_id")));
 
         GetCommand cmd_id;
         ObjectCommandTxRequest tx_req_id(namespace_table_name_.get(), next_id_key.get(), &cmd_id, /*auto_commit=*/false, /*always_redirect=*/true, txm);
@@ -6793,7 +6793,7 @@ bool RedisServiceImpl::SetNamespaceInDB(std::string_view ns, std::string_view to
         return false;
     }
 
-    EloqKey i_key("i:" + encoded_id, false);
+    EloqKey i_key = EloqKey::Raw("i:" + encoded_id);
 
     SetCommand cmd_set_i(ns);
     ObjectCommandTxRequest tx_req_set_i(namespace_table_name_.get(), &i_key, &cmd_set_i, /*auto_commit=*/false, /*always_redirect=*/true, txm);
@@ -6821,7 +6821,7 @@ bool RedisServiceImpl::DelNamespaceFromDB(std::string_view ns)
     std::vector<std::unique_ptr<DelCommand>> del_cmds;
     std::vector<std::unique_ptr<ObjectCommandTxRequest>> del_reqs;
 
-    EloqKey check_ns_key("n:" + std::string(ns), false);
+    EloqKey check_ns_key = EloqKey::Raw("n:" + std::string(ns));
 
     GetCommand cmd_ns;
     ObjectCommandTxRequest tx_req_ns(namespace_table_name_.get(), &check_ns_key, &cmd_ns, /*auto_commit=*/false, /*always_redirect=*/true, txm);
@@ -6835,7 +6835,7 @@ bool RedisServiceImpl::DelNamespaceFromDB(std::string_view ns)
     std::string token = cmd_ns.result_.str_;
     std::string encoded_id;
 
-    EloqKey check_token_key("t:" + token, false);
+    EloqKey check_token_key = EloqKey::Raw("t:" + token);
 
     GetCommand cmd_t;
     ObjectCommandTxRequest tx_req_t(namespace_table_name_.get(), &check_token_key, &cmd_t, /*auto_commit=*/false, /*always_redirect=*/true, txm);
@@ -6881,8 +6881,8 @@ bool RedisServiceImpl::DelNamespaceFromDB(std::string_view ns)
             uint64_t schema_version = catalog_rec.SchemaTs();
 
             // 2. Open scan on this table
-            EloqKey start_key(ns_prefix, false);
-            EloqKey end_key(ns_prefix_next, false);
+            EloqKey start_key = EloqKey::Raw(ns_prefix);
+            EloqKey end_key = EloqKey::Raw(ns_prefix_next);
 
             TxKey start_tx_key(&start_key);
             TxKey end_tx_key(&end_key);
@@ -6957,7 +6957,7 @@ bool RedisServiceImpl::DelNamespaceFromDB(std::string_view ns)
                     }
                     std::string full_key = tuple.key_.ToString();
 
-                    auto key_obj = std::make_unique<EloqKey>(full_key, false);
+                    auto key_obj = std::make_unique<EloqKey>(EloqKey::Raw(full_key));
 
                     auto del_cmd = std::make_unique<DelCommand>();
                     auto del_req = std::make_unique<ObjectCommandTxRequest>(
@@ -7008,7 +7008,7 @@ bool RedisServiceImpl::DelNamespaceFromDB(std::string_view ns)
 
     if (!encoded_id.empty())
     {
-        i_key = std::make_unique<EloqKey>("i:" + encoded_id, false);
+        i_key = std::make_unique<EloqKey>(EloqKey::Raw("i:" + encoded_id));
 
         cmd_del_i = std::make_unique<DelCommand>();
         tx_req_del_i = std::make_unique<ObjectCommandTxRequest>(namespace_table_name_.get(), i_key.get(), cmd_del_i.get(), /*auto_commit=*/false, /*always_redirect=*/true, txm);
@@ -7034,8 +7034,8 @@ std::map<std::string, std::string, std::less<>> RedisServiceImpl::ListNamespaces
     std::vector<std::unique_ptr<GetCommand>> get_cmds;
     std::vector<std::unique_ptr<ObjectCommandTxRequest>> get_reqs;
 
-    EloqKey start_key(std::string_view("n:"), false);
-    EloqKey end_key(std::string_view("n;"), false);
+    EloqKey start_key = EloqKey::Raw(std::string_view("n:"));
+    EloqKey end_key = EloqKey::Raw(std::string_view("n;"));
 
     TxKey start_tx_key(&start_key);
     TxKey end_tx_key(&end_key);
@@ -7112,7 +7112,7 @@ std::map<std::string, std::string, std::less<>> RedisServiceImpl::ListNamespaces
             if (full_key.size() > 2 && full_key.substr(0, 2) == "n:")
             {
                 std::string ns_name = full_key.substr(2);
-                auto key_obj = std::make_unique<EloqKey>(full_key, false);
+                auto key_obj = std::make_unique<EloqKey>(EloqKey::Raw(full_key));
 
                 auto get_cmd = std::make_unique<GetCommand>();
                 auto get_req = std::make_unique<ObjectCommandTxRequest>(

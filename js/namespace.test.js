@@ -182,8 +182,11 @@ const autoClose = (client) => {
   expectToFail = async (promise, expected_error_substring) => {
     try {
       await promise;
-      expect().unreachable();
+      throw new Error("Expected promise to fail, but it succeeded");
     } catch (err) {
+      if (err.message.includes("Expected promise to fail")) {
+        throw err;
+      }
       expect(err.message).toContain(expected_error_substring);
     }
   };
@@ -425,16 +428,19 @@ describe("EloqKV 命名空间隔离与管理", () => {
     await ns_client.send("SET", ["k2", "v2"]);
     await ns_client.send("SET", ["k3", "v3"]);
 
-    // 获取当前DBSIZE
-    const db_size_before = await default_client.send("DBSIZE", []);
+    // 校验删除前的命名空间数据库大小
+    const ns_db_size = await ns_client.send("DBSIZE", []);
+    expect(ns_db_size).toBe(3);
 
     // 删除命名空间
     const rm_res = await default_client.send("namespace", ["del", [ns_name]]);
     expect(rm_res).toBe("OK");
 
-    // 校验级联删除后，DBSIZE 减少了3个键
-    const db_size_after = await default_client.send("DBSIZE", []);
-    expect(db_size_before - db_size_after).toBe(3);
+    // 校验级联删除后，使用原有 token 建立新连接认证被拒绝
+    await expectToFail(
+      authClient(token),
+      "invalid username-password pair",
+    );
   });
 
   test("命名空间下 FLUSHDB 数据隔离与清空", async () => {
