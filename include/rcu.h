@@ -25,30 +25,30 @@ public:
 
     std::shared_ptr<const T> Read() const
     {
-        return std::atomic_load(&state_);
+        return state_.load(std::memory_order_acquire);
     }
 
     template <typename Func>
     auto Update(Func&& func) -> decltype(func(std::declval<T&>()))
     {
         std::lock_guard<std::mutex> lock(write_mu_);
-        auto latest = std::atomic_load(&state_);
+        auto latest = state_.load(std::memory_order_acquire);
         auto copy = std::make_shared<T>(*latest);
         if constexpr (std::is_void_v<decltype(func(std::declval<T&>()))>)
         {
             func(*copy);
-            std::atomic_store(&state_, std::shared_ptr<const T>(copy));
+            state_.store(std::shared_ptr<const T>(copy), std::memory_order_release);
         }
         else
         {
             auto res = func(*copy);
-            std::atomic_store(&state_, std::shared_ptr<const T>(copy));
+            state_.store(std::shared_ptr<const T>(copy), std::memory_order_release);
             return res;
         }
     }
 
 private:
-    std::shared_ptr<const T> state_;
+    std::atomic<std::shared_ptr<const T>> state_;
     mutable std::mutex write_mu_;
 };
 

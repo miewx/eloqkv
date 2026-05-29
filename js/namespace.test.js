@@ -220,6 +220,7 @@ beforeAll(async () => {
   writeFileSync(CONFIG_FILE, test_config);
 
   console.log("启动 EloqKV 服务端...");
+  await $`chmod +x ./build/eloqkv`;
   server_process = $`./build/eloqkv --config=${CONFIG_FILE} > eloqkv_server.log 2>&1`;
 
   console.log("等待服务就绪（双重检查逻辑）...");

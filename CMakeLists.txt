@@ -33,7 +33,7 @@ include_directories(BEFORE "/opt/homebrew/Cellar/protobuf@33/33.6/include")
 # sudo yum install readline-devel
 # sudo yum install ncurses-devel
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 
 add_compile_definitions(ELOQ_MODULE_ELOQKV)
 add_compile_definitions(GLOG_USE_GLOG_EXPORT)
