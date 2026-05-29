@@ -28,8 +28,8 @@ $.verbose = false;
 
 const TEST_PORT = 16379,
   REQUIRE_PASS = "testpass",
-  CONFIG_FILE = "eloqkv_test.ini",
-  DATA_DIR = "eloq_test_data";
+  CONFIG_FILE = ".tmp/eloqkv_test.ini",
+  DATA_DIR = ".tmp/eloq_test_data";
 
 let server_process = null;
 
@@ -67,6 +67,10 @@ beforeAll(async () => {
     throw new Error("EloqKV 服务端未编译，请先编译项目。");
   }
 
+  if (!existsSync(".tmp")) {
+    mkdirSync(".tmp", { recursive: true });
+  }
+
   console.log("准备测试配置...");
   // 读取基准配置并修改以实现测试隔离
   const base_config = readFileSync("eloqkv.ini", "utf-8");
@@ -94,7 +98,7 @@ beforeAll(async () => {
   console.log("启动 EloqKV 服务端...");
   await $`cp ./build/eloqkv /tmp/eloqkv`;
   await $`chmod +x /tmp/eloqkv`;
-  server_process = $`/tmp/eloqkv --config=${CONFIG_FILE} > eloqkv_server.log 2>&1`;
+  server_process = $`/tmp/eloqkv --config=${CONFIG_FILE} > .tmp/eloqkv_server.log 2>&1`;
 
   console.log("等待服务就绪（双重检查逻辑）...");
   let ready = false;
