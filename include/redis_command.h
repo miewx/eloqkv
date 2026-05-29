@@ -110,6 +110,7 @@ enum struct RedisCommandType
     QUIT,
     SELECT,
     CLIENT,
+    NAMESPACE,
     UNKNOWN,
 
     // string commands
@@ -772,6 +773,30 @@ struct SelectCommand : public DirectCommand
     RedisCommandResult result_;
 };
 
+struct NamespaceCommand : public DirectCommand
+{
+    NamespaceCommand() = default;
+    NamespaceCommand(std::string_view op, std::string_view ns, std::string_view token)
+        : op_(op), ns_(ns), token_(token)
+    {
+    }
+
+    void Execute(RedisServiceImpl *redis_impl,
+                 RedisConnectionContext *ctx) override;
+    void OutputResult(OutputHandler *reply) const override;
+
+    std::string op_;
+    std::string ns_;
+    std::string token_;
+
+    struct Result {
+        bool success{false};
+        std::string err_msg;
+        std::string str_val;
+        std::vector<std::string> list_val;
+    } result_;
+};
+
 struct InfoCommand : public DirectCommand
 {
     InfoCommand() = default;
@@ -1164,6 +1189,11 @@ struct ReadOnlyCommand : public DirectCommand
 struct ConfigCommand : public DirectCommand
 {
     ConfigCommand() = default;
+
+    explicit ConfigCommand(int8_t flag)
+        : flag_(flag)
+    {
+    }
 
     explicit ConfigCommand(std::vector<std::string_view> keys)
         : flag_(CONFIG_GET), keys_(keys)
@@ -7821,6 +7851,9 @@ std::tuple<bool, AuthCommand> ParseAuthCommand(
     const std::vector<std::string_view> &args, OutputHandler *output);
 
 std::tuple<bool, SelectCommand> ParseSelectCommand(
+    const std::vector<std::string_view> &args, OutputHandler *output);
+
+std::tuple<bool, NamespaceCommand> ParseNamespaceCommand(
     const std::vector<std::string_view> &args, OutputHandler *output);
 
 std::tuple<bool, ConfigCommand> ParseConfigCommand(

@@ -37,6 +37,7 @@
 #include "redis_handler.h"
 #include "redis_object.h"
 #include "redis_stats.h"
+#include "b255_encode.h"
 
 namespace EloqKV
 {
@@ -112,6 +113,8 @@ public:
     bool authenticated{false};
 
     int db_id{0};
+    std::string ns{"default"};
+    std::string ns_id{""};
 
     int64_t connect_time_us{0};
     size_t scan_cursor_cnt{0};

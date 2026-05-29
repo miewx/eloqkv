@@ -28,6 +28,7 @@
 #include <cstddef>
 #include <memory>  //std::unique_ptr
 #include <string>
+#include <map>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -37,6 +38,7 @@
 #include "eloq_metrics/include/meter.h"
 #include "eloqkv_catalog_factory.h"
 #include "error_messages.h"
+#include "namespace_manager.h"
 #include "lua_interpreter.h"
 #include "pub_sub_manager.h"
 #include "redis_command.h"
@@ -217,6 +219,14 @@ public:
     // Call this function to register `handler` that can handle command `name`.
     bool AddCommandHandler(const std::string &name,
                            RedisCommandHandler *handler);
+
+    NamespaceManager *GetNamespaceManager() { return &namespace_manager_; }
+    std::string GetNamespaceTokenFromDB(std::string_view ns);
+    std::string GetNamespaceFromTokenFromDB(std::string_view token, std::string &ns_id);
+    bool AddNamespaceToDB(std::string_view ns, std::string_view token);
+    bool SetNamespaceInDB(std::string_view ns, std::string_view token);
+    bool DelNamespaceFromDB(std::string_view ns);
+    std::map<std::string, std::string, std::less<>> ListNamespacesFromDB();
 
     // TLS configuration accessors
     bool IsTlsEnabled() const
@@ -545,6 +555,8 @@ private:
     store::DataStoreHandler *store_hd_{nullptr};
 
     std::vector<TableName> redis_table_names_;
+    std::unique_ptr<TableName> namespace_table_name_;
+    std::unique_ptr<TableName> ns_data_table_name_;
 
     std::vector<std::unique_ptr<RedisCommandHandler>> hd_vec_;
 
@@ -553,6 +565,8 @@ private:
 
     std::shared_mutex script_mutex_;
     std::unordered_map<std::string, std::string> scripts_;
+
+    NamespaceManager namespace_manager_;
 
     // use atomic variable to protect config_. We do not use mutex here because
     // we might jump to other task groups when updating config_, so using mutex

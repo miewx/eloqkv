@@ -94,6 +94,9 @@ public:
     INI_API bool HasValue(const std::string &section,
                           const std::string &name) const;
 
+    // Get all values under a section as a map
+    INI_API std::map<std::string, std::string> GetSectionValues(const std::string &section) const;
+
 private:
     int _error;
     std::map<std::string, std::string> _values;
