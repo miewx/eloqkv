@@ -20,6 +20,7 @@
  *
  */
 #include "redis_command.h"
+#include <openssl/rand.h>
 
 #include <brpc/acceptor.h>
 #include <butil/endpoint.h>
@@ -1572,11 +1573,14 @@ static std::string Base64UrlEncode(const uint8_t *data, size_t length)
 static std::string GenerateRandomToken()
 {
     uint8_t bytes[16];
-    std::random_device rd;
-    for (size_t i = 0; i < 4; ++i)
+    if (RAND_bytes(bytes, 16) != 1)
     {
-        uint32_t val = rd();
-        std::memcpy(&bytes[i * 4], &val, 4);
+        std::random_device rd;
+        for (size_t i = 0; i < 4; ++i)
+        {
+            uint32_t val = rd();
+            std::memcpy(&bytes[i * 4], &val, 4);
+        }
     }
 
     // Format as UUID Version 4
@@ -8442,7 +8446,6 @@ ParseMultiCommand(RedisServiceImpl *redis_impl,
             return {false, DirectRequest{}};
         }
 
-        cmd.Execute(redis_impl, ctx);  // Execute namespace command right away.
         return {success,
                 DirectRequest(ctx,
                               std::make_unique<NamespaceCommand>(std::move(cmd)))};

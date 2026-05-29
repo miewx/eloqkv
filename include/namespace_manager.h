@@ -34,6 +34,7 @@ private:
     mutable std::shared_mutex mu_;
     std::map<std::string, std::string, std::less<>> token_to_ns_;
     std::map<std::string, std::string, std::less<>> ns_to_token_;
+    std::map<std::string, std::string, std::less<>> ns_to_id_;
 };
 
 } // namespace EloqKV

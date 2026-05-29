@@ -5266,7 +5266,7 @@ bool RedisServiceImpl::ExecuteCommand(RedisConnectionContext *ctx,
             nullptr,
             txm,
             filter_pushdown ? static_cast<int32_t>(cmd->obj_type_) : -1,
-            filter_pushdown ? cmd->pattern_.StringView() : "",
+            filter_pushdown ? ComposeNamespaceKey(ns, cmd->pattern_.StringView()) : "",
             save_point);
 
         bool success = SendTxRequestAndWaitResult(txm, &scan_open, output);
@@ -5315,7 +5315,7 @@ bool RedisServiceImpl::ExecuteCommand(RedisConnectionContext *ctx,
                 nullptr,
                 txm,
                 filter_pushdown ? static_cast<int32_t>(cmd->obj_type_) : -1,
-                filter_pushdown ? cmd->pattern_.StringView() : "",
+                filter_pushdown ? ComposeNamespaceKey(ns, cmd->pattern_.StringView()) : "",
                 &plan);
             success = SendTxRequestAndWaitResult(txm, &scan_batch_req, output);
             if (!success)
@@ -5354,14 +5354,10 @@ bool RedisServiceImpl::ExecuteCommand(RedisConnectionContext *ctx,
                 }
 
                 std::string_view user_key = sv;
-                if (has_ns)
+                if (has_ns && sv.size() >= ns.size() &&
+                    sv.substr(0, ns.size()) == ns)
                 {
-                    if (sv.size() >= 1 + ns.size() &&
-                        static_cast<uint8_t>(sv[0]) == ns.size() &&
-                        sv.substr(1, ns.size()) == ns)
-                    {
-                        user_key = sv.substr(1 + ns.size());
-                    }
+                    user_key = sv.substr(ns.size());
                 }
 
                 if (!filter_pushdown)
@@ -5432,14 +5428,10 @@ bool RedisServiceImpl::ExecuteCommand(RedisConnectionContext *ctx,
                     const std::string_view sv =
                         tuple.key_.GetKey<EloqKey>()->StringView();
                     std::string_view user_key = sv;
-                    if (has_ns)
+                    if (has_ns && sv.size() >= ns.size() &&
+                        sv.substr(0, ns.size()) == ns)
                     {
-                        if (sv.size() >= 1 + ns.size() &&
-                            static_cast<uint8_t>(sv[0]) == ns.size() &&
-                            sv.substr(1, ns.size()) == ns)
-                        {
-                            user_key = sv.substr(1 + ns.size());
-                        }
+                        user_key = sv.substr(ns.size());
                     }
 
                     if (!filter_pushdown)
@@ -6488,17 +6480,18 @@ std::string RedisServiceImpl::GetNamespaceTokenFromDB(std::string_view ns)
     current_namespace = std::move(old_ns);
 
     GetCommand cmd;
-    ObjectCommandTxRequest tx_req(namespace_table_name_.get(), &db_key, &cmd, /*auto_commit=*/true, /*always_redirect=*/true, txm);
+    ObjectCommandTxRequest tx_req(namespace_table_name_.get(), &db_key, &cmd, /*auto_commit=*/false, /*always_redirect=*/true, txm);
     bool success = SendTxRequestAndWaitResult(txm, &tx_req, nullptr);
 
-    std::string token;
-    if (success && cmd.result_.err_code_ == RD_OK)
+    if (!success)
     {
-        token = cmd.result_.str_;
+        txservice::AbortTx(txm);
+        return "";
     }
-
-    txservice::CommitTx(txm);
-    return token;
+    auto [commit_success, _] = txservice::CommitTx(txm);
+    return (commit_success && cmd.result_.err_code_ == RD_OK)
+               ? cmd.result_.str_
+               : "";
 }
 
 std::string RedisServiceImpl::GetNamespaceFromTokenFromDB(std::string_view token, std::string &ns_id)

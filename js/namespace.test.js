@@ -528,4 +528,112 @@ describe("EloqKV 命名空间隔离与管理", () => {
 
     await default_client.send("namespace", ["del", [ns_name]]);
   });
+
+  test("MULTI/EXEC 事务内 NAMESPACE ADD/REFRESH 正常运行且不双重执行", async () => {
+    using client = await authClient();
+
+    await client.send("MULTI", []);
+    await client.send("namespace", ["add", "multi_ns_test"]);
+    const exec_res = await client.send("EXEC", []);
+
+    // 验证是否只执行了一次并且成功返回了 Token
+    expect(Array.isArray(exec_res)).toBe(true);
+    expect(exec_res.length).toBe(1);
+    expect(typeof exec_res[0]).toBe("string");
+
+    const token = exec_res[0];
+
+    // 测试 REFRESH 在事务内也正常
+    await client.send("MULTI", []);
+    await client.send("namespace", ["refresh", "multi_ns_test"]);
+    const refresh_exec_res = await client.send("EXEC", []);
+
+    expect(Array.isArray(refresh_exec_res)).toBe(true);
+    expect(refresh_exec_res.length).toBe(1);
+    expect(typeof refresh_exec_res[0]).toBe("string");
+    expect(refresh_exec_res[0]).not.toBe(token);
+
+    // 清理
+    const del_res = await client.send("namespace", ["del", "multi_ns_test"]);
+    expect(del_res).toBe("OK");
+  });
+
+  test("自定义命名空间下 SCAN 和 KEYS 的返回键正常剥离命名空间前缀", async () => {
+    using default_client = await authClient();
+    const ns_name = "ns_scan_test";
+
+    const token = await default_client.send("namespace", ["add", [ns_name]]);
+    await using _ns_cleanup = {
+      [Symbol.asyncDispose]: async () => {
+        try {
+          await default_client.send("namespace", ["del", [ns_name]]);
+        } catch {}
+      },
+    };
+
+    using ns_client = await authClient(token);
+
+    // 写入一些测试键
+    await ns_client.send("SET", ["user:1", "alice"]);
+    await ns_client.send("SET", ["user:2", "bob"]);
+    await ns_client.send("SET", ["product:1", "item"]);
+
+    // 测试 KEYS
+    const keys_all = await ns_client.send("KEYS", ["*"]);
+    expect(Array.isArray(keys_all)).toBe(true);
+    expect(keys_all.sort()).toEqual(["product:1", "user:1", "user:2"].sort());
+
+    // 测试带通配符匹配的 KEYS
+    const keys_matched = await ns_client.send("KEYS", ["user:*"]);
+    expect(Array.isArray(keys_matched)).toBe(true);
+    expect(keys_matched.sort()).toEqual(["user:1", "user:2"].sort());
+
+    // 测试 SCAN
+    const scan_res = await ns_client.send("SCAN", ["0"]);
+    expect(Array.isArray(scan_res)).toBe(true);
+    expect(scan_res.length).toBe(2);
+    const scanned_keys = scan_res[1];
+    expect(scanned_keys.sort()).toEqual(["product:1", "user:1", "user:2"].sort());
+
+    // 测试 SCAN MATCH
+    const scan_match_res = await ns_client.send("SCAN", ["0", "MATCH", "user:*"]);
+    expect(Array.isArray(scan_match_res)).toBe(true);
+    const scanned_matched_keys = scan_match_res[1];
+    expect(scanned_matched_keys.sort()).toEqual(["user:1", "user:2"].sort());
+  });
+
+  test("并发 AUTH 不同的命名空间以验证连接与事务隔离安全性", async () => {
+    using default_client = await authClient();
+    
+    // 批量添加多个命名空间
+    const tokens = await Promise.all([
+      default_client.send("namespace", ["add", "ns_concurrent_1"]),
+      default_client.send("namespace", ["add", "ns_concurrent_2"]),
+      default_client.send("namespace", ["add", "ns_concurrent_3"]),
+    ]);
+
+    await using _ns_cleanup = {
+      [Symbol.asyncDispose]: async () => {
+        try {
+          await default_client.send("namespace", ["del", "ns_concurrent_1"]);
+          await default_client.send("namespace", ["del", "ns_concurrent_2"]);
+          await default_client.send("namespace", ["del", "ns_concurrent_3"]);
+        } catch {}
+      },
+    };
+
+    // 并发认证
+    const clients = await Promise.all(tokens.map(t => authClient(t)));
+    
+    await using _clients_cleanup = {
+      [Symbol.asyncDispose]: async () => {
+        clients.forEach(c => c.close());
+      }
+    };
+
+    // 并发验证
+    const current_nss = await Promise.all(clients.map(c => c.send("namespace", ["current"])));
+    expect(current_nss).toEqual(["ns_concurrent_1", "ns_concurrent_2", "ns_concurrent_3"]);
+  });
 });
+

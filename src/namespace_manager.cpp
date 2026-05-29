@@ -1,4 +1,5 @@
 #include "namespace_manager.h"
+#include "namespace_codec.h"
 #include <mutex>
 #ifndef UNIT_TEST
 #include "redis_service.h"
@@ -39,6 +40,15 @@ bool NamespaceManager::Add(std::string_view ns, std::string_view token)
     }
     token_to_ns_.emplace(token, ns);
     ns_to_token_.emplace(ns, token);
+    uint64_t id = 2 + ns_to_id_.size();
+    if (ns == "default")
+    {
+        ns_to_id_.emplace(ns, std::string(1, '\x01') + std::string(1, '\x00'));
+    }
+    else
+    {
+        ns_to_id_.emplace(ns, EncodeBase255(id) + std::string(1, '\x00'));
+    }
     return true;
 }
 
@@ -71,6 +81,15 @@ bool NamespaceManager::Set(std::string_view ns, std::string_view token)
 
     token_to_ns_.emplace(token, ns);
     ns_to_token_.emplace(ns, token);
+    uint64_t id = 2 + ns_to_id_.size();
+    if (ns == "default")
+    {
+        ns_to_id_.emplace(ns, std::string(1, '\x01') + std::string(1, '\x00'));
+    }
+    else
+    {
+        ns_to_id_.emplace(ns, EncodeBase255(id) + std::string(1, '\x00'));
+    }
     return true;
 }
 
@@ -86,6 +105,7 @@ bool NamespaceManager::Del(std::string_view ns)
     if (it_ns != ns_to_token_.end())
     {
         token_to_ns_.erase(it_ns->second);
+        ns_to_id_.erase(std::string(ns));
         ns_to_token_.erase(it_ns);
         return true;
     }
@@ -126,6 +146,11 @@ std::string NamespaceManager::GetByToken(std::string_view token, std::string &ns
     auto it = token_to_ns_.find(token);
     if (it != token_to_ns_.end())
     {
+        auto it_id = ns_to_id_.find(it->second);
+        if (it_id != ns_to_id_.end())
+        {
+            ns_id = it_id->second;
+        }
         return it->second;
     }
     return "";
