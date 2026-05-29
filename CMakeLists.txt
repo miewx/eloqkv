@@ -15,16 +15,6 @@
 cmake_minimum_required(VERSION 3.12)
 project(eloqkv C CXX)
 
-# Enable ccache if available
-find_program(CCACHE_PROGRAM ccache)
-if(CCACHE_PROGRAM)
-    set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
-    set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
-    message(STATUS "ccache enabled")
-endif()
-
-include_directories(BEFORE "/opt/homebrew/Cellar/protobuf@33/33.6/include")
-
 # Install dependencies to compile redis_cli:
 # With apt:
 # sudo apt-get install libreadline-dev
@@ -36,7 +26,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 20)
 
 add_compile_definitions(ELOQ_MODULE_ELOQKV)
-add_compile_definitions(GLOG_USE_GLOG_EXPORT)
 
 # Option to build as library for converged binary
 option(BUILD_ELOQKV_AS_LIBRARY "Build eloqkv as library instead of executable" OFF)
