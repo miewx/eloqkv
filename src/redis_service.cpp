@@ -2839,7 +2839,7 @@ bool RedisServiceImpl::ExecuteFlushDBCommand(
             auto [commit_success, commit_err] = txservice::CommitTx(txm);
             if (commit_success)
             {
-                output->OnSimpleString("OK");
+                output->OnStatus("OK");
                 return true;
             }
             else
@@ -2850,7 +2850,7 @@ bool RedisServiceImpl::ExecuteFlushDBCommand(
         }
         else
         {
-            output->OnSimpleString("OK");
+            output->OnStatus("OK");
             return true;
         }
     }

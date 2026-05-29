@@ -76,6 +76,7 @@
 #include "tx_command.h"
 #include "tx_request.h"
 #include "tx_service.h"
+#include "tx_util.h"
 #include "type.h"
 
 extern "C"
@@ -2243,7 +2244,7 @@ void DBSizeCommand::Execute(RedisServiceImpl *redis_impl,
     {
         std::string ns_prefix = ctx->ns_id;
         std::string ns_prefix_next = ComposeNamespaceKeyNext(ns_prefix);
-        const TableName &table_name = *redis_impl->RedisTableName(ctx->db_id, ctx);
+        const TableName &table_name = *redis_impl->RedisTableName(ctx->db_id);
 
         TransactionExecution *txm = redis_impl->NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
         if (txm == nullptr)
@@ -2314,7 +2315,9 @@ void DBSizeCommand::Execute(RedisServiceImpl *redis_impl,
             "",
             &save_point);
 
-        bool success = redis_impl->SendTxRequestAndWaitResult(txm, &scan_open, nullptr);
+        txm->Execute(&scan_open);
+        scan_open.Wait();
+        bool success = !scan_open.IsError();
         if (!success)
         {
             txservice::AbortTx(txm);
@@ -2351,7 +2354,9 @@ void DBSizeCommand::Execute(RedisServiceImpl *redis_impl,
                 "",
                 &plan);
 
-            success = redis_impl->SendTxRequestAndWaitResult(txm, &scan_batch_req, nullptr);
+            txm->Execute(&scan_batch_req);
+            scan_batch_req.Wait();
+            success = !scan_batch_req.IsError();
             if (!success) break;
 
             for (const auto &tuple : scan_batch)
@@ -2378,7 +2383,7 @@ void DBSizeCommand::Execute(RedisServiceImpl *redis_impl,
     }
 
     std::vector<TableName> table_names;
-    const TableName *tbn = redis_impl->RedisTableName(ctx->db_id, ctx);
+    const TableName *tbn = redis_impl->RedisTableName(ctx->db_id);
     table_names.emplace_back(
         tbn->StringView(), tbn->Type(), TableEngine::EloqKv);
     auto result = FetchDBSize(std::move(table_names));
