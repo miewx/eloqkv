@@ -20,17 +20,23 @@ struct NamespaceToken
 
     NamespaceToken() = default;
 
-    explicit NamespaceToken(std::string_view token_str)
+    explicit NamespaceToken(std::string_view raw_bytes)
     {
-        if (token_str.size() == 22)
+        if (raw_bytes.size() == 16)
         {
-            valid = Base64UrlDecode(token_str, bytes, 16);
-        }
-        else if (token_str.size() == 16)
-        {
-            std::memcpy(bytes, token_str.data(), 16);
+            std::memcpy(bytes, raw_bytes.data(), 16);
             valid = true;
         }
+    }
+
+    static NamespaceToken FromBase64Url(std::string_view b64_str)
+    {
+        NamespaceToken token;
+        if (b64_str.size() == 22)
+        {
+            token.valid = Base64UrlDecode(b64_str, token.bytes, 16);
+        }
+        return token;
     }
 
     std::string ToString() const

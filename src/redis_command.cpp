@@ -1490,7 +1490,7 @@ void PingCommand::Execute(RedisServiceImpl *redis_impl,
 void AuthCommand::Execute(RedisServiceImpl *redis_impl,
                           RedisConnectionContext *ctx)
 {
-    NamespaceToken token(password_);
+    NamespaceToken token = NamespaceToken::FromBase64Url(password_);
     auto ns_meta = token.valid ? redis_impl->GetNamespaceManager()->GetMetadataByToken(token) : nullptr;
     if (ns_meta)
     {
