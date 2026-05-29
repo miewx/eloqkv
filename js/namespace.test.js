@@ -1,160 +1,26 @@
 #!/usr/bin/env bun
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { Socket } from "node:net";
+import { RedisClient as BunRedisClient } from "bun";
 import { $ } from "zx";
 import { readFileSync, writeFileSync, existsSync, unlinkSync, rmSync } from "fs";
 import { cpus } from "os";
 
 class RedisClient {
   constructor(url) {
-    const match = url.match(/:(\d+)/);
-    this.port = match ? parseInt(match[1]) : 6379;
-    this.socket = null;
-    this.connected = false;
-    this.buffer = Buffer.alloc(0);
-    this.queue = [];
-    this.connectPromise = null;
+    this.client = new BunRedisClient(url);
   }
 
   async connect() {
-    if (this.connected) return;
-    if (this.connectPromise) return this.connectPromise;
-
-    this.connectPromise = new Promise((resolve, reject) => {
-      this.socket = new Socket();
-      this.socket.connect(this.port, "127.0.0.1", () => {
-        this.connected = true;
-        resolve();
-      });
-
-      this.socket.on("data", (data) => {
-        this.buffer = Buffer.concat([this.buffer, data]);
-        this.processQueue();
-      });
-
-      this.socket.on("error", (err) => {
-        reject(err);
-      });
-
-      this.socket.on("close", () => {
-        this.connected = false;
-        for (const { reject: rej } of this.queue) {
-          rej(new Error("Connection closed"));
-        }
-        this.queue = [];
-      });
-    });
-
-    return this.connectPromise;
+    await this.client.connect();
   }
 
   async send(cmd, args = []) {
-    await this.connect();
-    return new Promise((resolve, reject) => {
-      this.queue.push({ resolve, reject });
-      const encoded = this.encode(cmd, args);
-      this.socket.write(encoded);
-    });
-  }
-
-  encode(cmd, args) {
-    const parts = [cmd, ...args];
-    let resp = `*${parts.length}\r\n`;
-    for (const part of parts) {
-      const s = String(part);
-      resp += `$${Buffer.byteLength(s)}\r\n${s}\r\n`;
-    }
-    return resp;
-  }
-
-  processQueue() {
-    while (this.queue.length > 0) {
-      const parsed = this.parseResponse();
-      if (!parsed) {
-        break;
-      }
-      const { value, error } = parsed;
-      const { resolve, reject } = this.queue.shift();
-      if (error) {
-        reject(error);
-      } else {
-        resolve(value);
-      }
-    }
-  }
-
-  parseResponse() {
-    if (this.buffer.length === 0) return null;
-    const idx = this.buffer.indexOf("\r\n");
-    if (idx === -1) return null;
-
-    const type = this.buffer[0];
-    const line = this.buffer.toString("utf8", 1, idx);
-
-    if (type === 43) {
-      // '+'
-      this.buffer = this.buffer.subarray(idx + 2);
-      return { value: line };
-    }
-
-    if (type === 45) {
-      // '-'
-      this.buffer = this.buffer.subarray(idx + 2);
-      return { error: new Error(line) };
-    }
-
-    if (type === 58) {
-      // ':'
-      this.buffer = this.buffer.subarray(idx + 2);
-      return { value: parseInt(line) };
-    }
-
-    if (type === 36) {
-      // '$'
-      const len = parseInt(line);
-      if (len === -1) {
-        this.buffer = this.buffer.subarray(idx + 2);
-        return { value: null };
-      }
-      if (this.buffer.length < idx + 2 + len + 2) return null;
-      const val = this.buffer.toString("utf8", idx + 2, idx + 2 + len);
-      this.buffer = this.buffer.subarray(idx + 2 + len + 2);
-      return { value: val };
-    }
-
-    if (type === 42) {
-      // '*'
-      const count = parseInt(line);
-      if (count === -1) {
-        this.buffer = this.buffer.subarray(idx + 2);
-        return { value: null };
-      }
-      const savedBuffer = this.buffer;
-      this.buffer = this.buffer.subarray(idx + 2);
-      const arr = [];
-      for (let i = 0; i < count; i++) {
-        const item = this.parseResponse();
-        if (!item) {
-          this.buffer = savedBuffer;
-          return null;
-        }
-        if (item.error) {
-          this.buffer = savedBuffer;
-          return { error: item.error };
-        }
-        arr.push(item.value);
-      }
-      return { value: arr };
-    }
-
-    this.buffer = this.buffer.subarray(idx + 2);
-    return { error: new Error("Unknown RESP type: " + String.fromCharCode(type)) };
+    const flatArgs = args.map(arg => String(arg));
+    return await this.client.send(cmd, flatArgs);
   }
 
   close() {
-    if (this.socket) {
-      this.socket.destroy();
-    }
+    this.client.close();
   }
 }
 
