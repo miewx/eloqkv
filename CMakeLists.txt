@@ -349,6 +349,7 @@ endif()
 set(INCLUDE_DIRS
     ${PROJECT_SOURCE_DIR}/
     ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/include/namespace
     ${PROJECT_SOURCE_DIR}/include/redis
 )
 
@@ -382,7 +383,8 @@ SET(RESELOQ_RESOURCES
     src/eloq_string.cpp
     src/lua_interpreter.cpp
     src/pub_sub_manager.cpp
-    src/namespace_manager.cpp
+    src/namespace/manager.cpp
+    src/namespace/db_storage.cpp
     src/b255_encode.cpp
     src/redis_service.cpp
     src/redis_command.cpp

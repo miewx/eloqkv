@@ -38,7 +38,7 @@
 #include "eloq_metrics/include/meter.h"
 #include "eloqkv_catalog_factory.h"
 #include "error_messages.h"
-#include "namespace_manager.h"
+#include "namespace/manager.h"
 #include "lua_interpreter.h"
 #include "pub_sub_manager.h"
 #include "redis_command.h"
@@ -153,23 +153,7 @@ class RedisCommandHandler;
 class RedisConnectionContext;
 class MultiTransactionHandler;
 class RedisServiceImpl;
-
-class DbNamespaceStorage : public INamespaceStorage
-{
-public:
-    explicit DbNamespaceStorage(RedisServiceImpl *server) : server_(server) {}
-    ~DbNamespaceStorage() override = default;
-
-    std::string GetToken(std::string_view ns) override;
-    std::string GetNamespaceFromToken(std::string_view token, std::string &ns_id, uint64_t &epoch) override;
-    bool Add(std::string_view ns, std::string_view token) override;
-    bool Set(std::string_view ns, std::string_view token) override;
-    bool Del(std::string_view ns) override;
-    std::map<std::string, std::string, std::less<>> List() override;
-
-private:
-    RedisServiceImpl *server_;
-};
+class DbNamespaceStorage;
 
 const std::unordered_set<std::string> redis_config_keys = {
     "slowlog-log-slower-than",
@@ -527,12 +511,12 @@ private:
     bool CleanPrefixKeys(const std::string& old_prefix);
     void DeleteGCRecord(const std::string& gc_key);
 
-    std::string GetNamespaceTokenFromDB(std::string_view ns);
-    std::string GetNamespaceFromTokenFromDB(std::string_view token, std::string &ns_id, uint64_t &epoch);
-    bool AddNamespaceToDB(std::string_view ns, std::string_view token);
-    bool SetNamespaceInDB(std::string_view ns, std::string_view token);
+    NamespaceToken GetNamespaceTokenFromDB(std::string_view ns);
+    std::string GetNamespaceFromTokenFromDB(const NamespaceToken &token, std::string &ns_id, uint64_t &epoch);
+    bool AddNamespaceToDB(std::string_view ns, const NamespaceToken &token);
+    bool SetNamespaceInDB(std::string_view ns, const NamespaceToken &token);
     bool DelNamespaceFromDB(std::string_view ns);
-    std::map<std::string, std::string, std::less<>> ListNamespacesFromDB();
+    std::map<NamespaceToken, std::string> ListNamespacesFromDB();
 
     static bool SendTxRequest(TransactionExecution *txm,
                               TxRequest *tx_req,

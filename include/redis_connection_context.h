@@ -38,7 +38,7 @@
 #include "redis_object.h"
 #include "redis_stats.h"
 #include "b255_encode.h"
-#include "namespace_manager.h"
+#include "namespace/manager.h"
 
 namespace EloqKV
 {

@@ -1,6 +1,7 @@
 #include "b255_encode.h"
 #include <algorithm>
 #include <cstdint>
+#include <string_view>
 
 namespace EloqKV
 {

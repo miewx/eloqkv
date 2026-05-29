@@ -29,7 +29,7 @@
 #include "eloq_string.h"
 #include "redis_string_match.h"
 #include "tx_key.h"
-#include "namespace_prefix.h"
+#include "namespace/prefix.h"
 
 namespace EloqKV
 {
@@ -57,18 +57,7 @@ inline std::string ComposeNamespaceKeyNext(std::string_view ns)
     {
         return "";
     }
-    std::string ns_prefix(ns);
-    for (int i = static_cast<int>(ns_prefix.size()) - 1; i >= 0; --i)
-    {
-        auto c = static_cast<unsigned char>(ns_prefix[i]);
-        if (c != 0xFF)
-        {
-            ns_prefix[i] = static_cast<char>(c + 1);
-            ns_prefix.resize(i + 1);
-            return ns_prefix;
-        }
-    }
-    return "";
+    return NamespacePrefix::MakePrefixNext(ns);
 }
 
 inline std::string ApplyNamespace(std::string_view key)
