@@ -1,5 +1,7 @@
 #include "namespace/context.h"
+
 #include <bthread/bthread.h>
+#include <bthread/types.h>
 #include <mutex>
 
 namespace EloqKV

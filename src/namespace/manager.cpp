@@ -1,6 +1,7 @@
 #include "namespace/manager.h"
 
 #include "b255_encode.h"
+#include "token.h"
 
 namespace EloqKV
 {
