@@ -10,6 +10,7 @@ RUN apt-get update && \
     FIX_PATH=$(find /usr -name fix_includes.py | head -n 1) && \
     if [ -n "$FIX_PATH" ]; then \
         ln -sf "$FIX_PATH" /usr/bin/fix_includes.py; \
+        ln -sf "$FIX_PATH" /usr/bin/fix_include; \
     fi
 
 # 避免容器内工作目录的 Git 安全目录校验冲突
