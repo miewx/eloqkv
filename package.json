@@ -1,6 +1,7 @@
 {
   "type": "module",
   "dependencies": {
+    "@3-/gci": "^0.1.2",
     "zx": "^8.8.5"
   },
   "devDependencies": {
