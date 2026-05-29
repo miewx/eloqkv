@@ -5,7 +5,9 @@ DIR=$(realpath $0) && DIR=${DIR%/*}
 cd $DIR
 set -x
 
-git submodule update --init --recursive
+if [ ! -f "data_substrate/CMakeLists.txt" ]; then
+  git submodule update --init --recursive
+fi
 
 # Set ccache directory to be in the workspace to persist it across container runs
 export CCACHE_DIR="$DIR/.ccache"
