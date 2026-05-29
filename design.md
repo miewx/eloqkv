@@ -32,21 +32,17 @@
     - 各自定义命名空间在 `ns_data_table` 内使用独特的 Base-255 编码前缀实现前缀隔离。
     - **自定义命名空间 Key 前缀格式**：
       ```
-      Key Prefix = MAGIC (\xFF) + VERSION_1 (\x01) + encoded_ns_id + Delimiter (\x00) + encoded_epoch + Delimiter (\x00)
+      Key Prefix = encoded_ns_id + Delimiter (\x00) + encoded_epoch + Delimiter (\x00)
       ```
 
       ```mermaid
       graph LR
-          MAGIC["MAGIC (1B: \\xFF)"] --> VERSION["VERSION (1B: \\x01)"]
-          VERSION --> NS_ID["encoded_ns_id (Base-255 string)"]
-          NS_ID --> DELIM1["Delimiter (1B: \\x00)"]
+          NS_ID["encoded_ns_id (Base-255 string)"] --> DELIM1["Delimiter (1B: \\x00)"]
           DELIM1 --> EPOCH["encoded_epoch (Base-255 string)"]
           EPOCH --> DELIM2["Delimiter (1B: \\x00)"]
           DELIM2 --> USER_KEY["User Key (raw string)"]
       ```
 
-      - **`MAGIC`**：魔法前缀字节，固定为 `\xFF`。
-      - **`VERSION_1`**：版本标识，固定为 `\x01`。
       - **`encoded_ns_id`**：租户 Namespace ID 经过 Base-255 编码后的字符串。由于 Base-255 编码排除了 `\x00` 字符，因此 `\x00` 可以安全作为分隔符。
       - **`encoded_epoch`**：当前命名空间的 epoch（清除版本号），同样使用 Base-255 编码。
     - 由于 `\x00` 作为前缀分隔符且与数据内容完全隔离，保证了各个命名空间 Key 之间的无碰撞与安全隔离。
@@ -83,16 +79,12 @@ std::string EncodeBase255(uint64_t id)
 // 2. 命名空间 Key 前缀构造 (include/namespace/prefix.h)
 namespace NamespacePrefix
 {
-    constexpr char MAGIC = '\xFF';
-    constexpr char VERSION_1 = '\x01';
     constexpr char B255_DELIMITER = '\x00';
 
     inline std::string MakePrefixV1(std::string_view encoded_ns_id, uint64_t epoch)
     {
         std::string prefix;
-        prefix.reserve(2 + encoded_ns_id.size() + 1 + 8 + 1);
-        prefix.push_back(MAGIC);
-        prefix.push_back(VERSION_1);
+        prefix.reserve(encoded_ns_id.size() + 1 + 8 + 1);
         prefix.append(encoded_ns_id);
         prefix.push_back(B255_DELIMITER);
         prefix.append(EncodeBase255(epoch));
