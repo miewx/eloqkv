@@ -79,8 +79,17 @@ void TestNamespacePrefixing()
     // --- CASE 2: Absolutely Isolated Mode (enable_namespace = true) ---
     EloqKV::enable_namespace = true;
 
-    // Default namespace key is prefixed with \x01\x00 (EncodeBase255(0) + \x00)
+    // Default namespace key is prefixless when use_legacy_default_ns = false (new default behavior)
+    EloqKV::use_legacy_default_ns = false;
     EloqKV::current_namespace = "default";
+    std::string isolated_default_key_new = ApplyNamespace("mykey");
+    assert(isolated_default_key_new == "mykey");
+
+    std::string isolated_default_next_new = ComposeNamespaceKeyNext("default");
+    assert(isolated_default_next_new == "");
+
+    // Default namespace key is prefixed with \x01\x00 when use_legacy_default_ns = true
+    EloqKV::use_legacy_default_ns = true;
     std::string isolated_default_key = ApplyNamespace("mykey");
     assert(isolated_default_key.size() == 2 + 5);
     assert(isolated_default_key[0] == '\x01');
@@ -100,7 +109,7 @@ void TestNamespacePrefixing()
     std::string isolated_empty_key = ApplyNamespace("mykey");
     assert(isolated_empty_key == "mykey");
 
-    // Test isolated ComposeNamespaceKeyNext for default namespace
+    // Test isolated ComposeNamespaceKeyNext for default namespace (legacy mode)
     std::string isolated_default_next = ComposeNamespaceKeyNext("default");
     assert(isolated_default_next.size() == 2);
     assert(isolated_default_next[0] == '\x01');
