@@ -181,7 +181,8 @@ const repo_root = import.meta.dirname,
 
 try {
   await run();
-} catch {
+} catch (err) {
+  ERR("同步发生未捕获的错误：", err.message || err);
   process.exit(1);
 }
 
