@@ -227,7 +227,7 @@ bool RedisServiceImpl::Init(brpc::Server &brpc_server)
     }
 
     // Register isolated namespace table
-    namespace_table_name_ = std::make_unique<TableName>(std::string("__namespace"), TableType::Primary, TableEngine::EloqKv);
+    namespace_table_name_ = std::make_unique<TableName>(std::string("__ns_0"), TableType::Primary, TableEngine::EloqKv);
     std::string ns_image = GenKvTableName(*namespace_table_name_);
 #if defined(DATA_STORE_TYPE_CASSANDRA)
     EloqDS::CassCatalogInfo ns_kv_info(ns_image, "");
@@ -237,7 +237,7 @@ bool RedisServiceImpl::Init(brpc::Server &brpc_server)
     prebuilt_tables.emplace_back(*namespace_table_name_, ns_image);
 
     // Register custom namespace shared table
-    ns_data_table_name_ = std::make_unique<TableName>(std::string("ns_data_table"), TableType::Primary, TableEngine::EloqKv);
+    ns_data_table_name_ = std::make_unique<TableName>(std::string("ns_data_table_0"), TableType::Primary, TableEngine::EloqKv);
     std::string ns_data_image = GenKvTableName(*ns_data_table_name_);
 #if defined(DATA_STORE_TYPE_CASSANDRA)
     EloqDS::CassCatalogInfo ns_data_kv_info(ns_data_image, "");
