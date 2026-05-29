@@ -35,6 +35,7 @@ private:
     std::map<std::string, std::string, std::less<>> token_to_ns_;
     std::map<std::string, std::string, std::less<>> ns_to_token_;
     std::map<std::string, std::string, std::less<>> ns_to_id_;
+    uint64_t next_id_{2};
 };
 
 } // namespace EloqKV

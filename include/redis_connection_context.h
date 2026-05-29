@@ -71,7 +71,7 @@ public:
           pub_sub_mgr(mgr)
     {
         RedisStats::IncrConnReceived();
-        ns_id = std::string(1, '\x01') + std::string(1, B255_DELIMITER);
+        ns_id = std::string{'\x01', B255_DELIMITER};
     }
 
     ~RedisConnectionContext() override;
