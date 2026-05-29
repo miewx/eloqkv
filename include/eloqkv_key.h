@@ -91,13 +91,18 @@ class EloqKey
 public:
     EloqKey() = default;
 
-    EloqKey(const char *key_buf, size_t key_len) : key_(CreateEloqStringFromNamespace(std::string_view(key_buf, key_len)))
+    EloqKey(const char *key_buf, size_t key_len, bool apply_namespace = true)
+        : key_(apply_namespace ? CreateEloqStringFromNamespace(std::string_view(key_buf, key_len))
+                               : EloqString(key_buf, key_len))
     {
     }
 
-    EloqKey(std::string_view str_view) : key_(CreateEloqStringFromNamespace(str_view))
+    EloqKey(std::string_view str_view, bool apply_namespace = true)
+        : key_(apply_namespace ? CreateEloqStringFromNamespace(str_view)
+                               : EloqString(str_view))
     {
     }
+
 
     // Deep copy the key_
     EloqKey(const EloqKey &rhs) : key_(rhs.key_.Clone())
@@ -425,7 +430,7 @@ public:
     static const EloqKey *PackedNegativeInfinity()
     {
         static char neg_inf_packed_key = 0x00;
-        static const EloqKey neg_inf_key(&neg_inf_packed_key, 1);
+        static const EloqKey neg_inf_key(&neg_inf_packed_key, 1, false);
         return &neg_inf_key;
     }
 
