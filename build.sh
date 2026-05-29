@@ -15,5 +15,5 @@ mkdir -p build
 cd build
 
 cmake -DWITH_LOG_SERVICE=ON ..
-make
+make -j$(nproc)
 chmod +x eloqkv
