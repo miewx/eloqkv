@@ -60,7 +60,10 @@ struct BucketScanCursor
 class RedisConnectionContext : public brpc::ConnectionContext
 {
 public:
-    RedisConnectionContext() : output(&arena) {};
+    RedisConnectionContext() : output(&arena)
+    {
+        InitNamespaceState();
+    }
     explicit RedisConnectionContext(brpc::Socket *sock, PubSubManager *mgr)
         : socket(sock),
           connect_time_us(
@@ -72,6 +75,7 @@ public:
           pub_sub_mgr(mgr)
     {
         RedisStats::IncrConnReceived();
+        InitNamespaceState();
     }
 
     ~RedisConnectionContext() override;
@@ -155,6 +159,13 @@ public:
 
     friend class RedisServiceImpl;
     friend class PubSubManager;
+
+private:
+    void InitNamespaceState()
+    {
+        ns = "default";
+        ns_id = "";
+    }
 };
 
 }  // namespace EloqKV

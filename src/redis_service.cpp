@@ -2967,15 +2967,17 @@ bool RedisServiceImpl::CleanPrefixKeys(const std::string& old_prefix)
                 &plan);
             txm->Execute(&scan_batch_req);
             scan_batch_req.Wait();
-
-            if (!scan_batch_req.IsError())
+            if (scan_batch_req.IsError())
             {
-                for (const auto &tuple : scan_batch)
+                txservice::AbortTx(txm);
+                return false;
+            }
+
+            for (const auto &tuple : scan_batch)
+            {
+                if (tuple.status_ == txservice::RecordStatus::Normal)
                 {
-                    if (tuple.status_ == txservice::RecordStatus::Normal)
-                    {
-                        keys_to_delete.push_back(tuple.key_.ToString());
-                    }
+                    keys_to_delete.push_back(tuple.key_.ToString());
                 }
             }
         }

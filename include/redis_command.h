@@ -110,7 +110,6 @@ enum struct RedisCommandType
     QUIT,
     SELECT,
     CLIENT,
-    NAMESPACE,
     UNKNOWN,
 
     // string commands
@@ -321,6 +320,7 @@ enum struct RedisCommandType
 #endif
 
     UNLINK,
+    NAMESPACE,
 };
 
 enum RedisResultType

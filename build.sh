@@ -50,3 +50,5 @@ cd build
 
 cmake -DWITH_LOG_SERVICE=ON ..
 make -j$JOBS
+chmod +x eloqkv
+
