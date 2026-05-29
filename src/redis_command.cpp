@@ -1628,15 +1628,12 @@ void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
         {
             result_.success = true;
             auto list = ns_mgr->List();
-            result_.list_val.reserve(list.size() * 2 + 2);
+            result_.list_val.reserve(list.size() * 2);
             for (auto &pair : list)
             {
                 result_.list_val.push_back(pair.second); // namespace
                 result_.list_val.push_back(pair.first);  // token
             }
-            // Add default namespace
-            result_.list_val.push_back("default");
-            result_.list_val.push_back(requirepass);
         }
         else
         {

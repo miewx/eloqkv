@@ -328,7 +328,6 @@ describe("EloqKV 命名空间隔离与管理", () => {
       ns_map[list[i]] = list[i + 1];
     }
     expect(ns_map["ns_test_1"]).toBe(token);
-    expect(ns_map["default"]).toBe(REQUIRE_PASS);
 
     const new_token = await client.send("namespace", ["refresh", "ns_test_1"]);
     expect(typeof new_token).toBe("string");
