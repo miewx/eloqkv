@@ -1,6 +1,7 @@
 #include "namespace_manager.h"
 #include "b255_encode.h"
 #include <mutex>
+#include <memory>
 
 namespace EloqKV
 {
@@ -9,63 +10,121 @@ namespace EloqKV
 // MemoryNamespaceStorage Implementation
 // ==========================================
 
+MemoryNamespaceStorage::MemoryNamespaceStorage()
+    : state_(std::make_shared<StorageState>())
+{
+}
+
 bool MemoryNamespaceStorage::Add(std::string_view ns, std::string_view token)
 {
-    std::unique_lock<std::shared_mutex> lock(mu_);
-    auto it_ns = ns_to_token_.find(ns);
-    if (it_ns != ns_to_token_.end())
+    std::lock_guard<std::mutex> lock(write_mu_);
+    auto latest_state = std::atomic_load(&state_);
+    if (latest_state)
     {
-        return it_ns->second == token;
+        auto it_ns = latest_state->ns_to_token.find(ns);
+        if (it_ns != latest_state->ns_to_token.end())
+        {
+            return it_ns->second == token;
+        }
+        if (latest_state->token_to_ns.find(token) != latest_state->token_to_ns.end())
+        {
+            return false;
+        }
     }
-    if (token_to_ns_.find(token) != token_to_ns_.end())
+
+    auto new_state = std::make_shared<StorageState>();
+    if (latest_state)
     {
-        return false;
+        new_state->token_to_ns = latest_state->token_to_ns;
+        new_state->ns_to_token = latest_state->ns_to_token;
+        new_state->ns_to_id = latest_state->ns_to_id;
+        new_state->next_id = latest_state->next_id;
     }
-    token_to_ns_.emplace(token, ns);
-    ns_to_token_.emplace(ns, token);
-    uint64_t id = ++next_id_;
-    ns_to_id_.emplace(ns, EncodeBase255(id) + std::string{B255_DELIMITER});
+
+    new_state->token_to_ns.emplace(token, ns);
+    new_state->ns_to_token.emplace(ns, token);
+    uint64_t id = ++new_state->next_id;
+    new_state->ns_to_id.emplace(ns, EncodeBase255(id) + std::string{B255_DELIMITER});
+
+    std::atomic_store(&state_, std::shared_ptr<const StorageState>(new_state));
     return true;
 }
 
 bool MemoryNamespaceStorage::Set(std::string_view ns, std::string_view token)
 {
-    std::unique_lock<std::shared_mutex> lock(mu_);
-    auto it_token = token_to_ns_.find(token);
-    if (it_token != token_to_ns_.end() && it_token->second != ns)
+    std::lock_guard<std::mutex> lock(write_mu_);
+    auto latest_state = std::atomic_load(&state_);
+    if (latest_state)
     {
-        return false;
-    }
-
-    auto it_ns = ns_to_token_.find(ns);
-    if (it_ns != ns_to_token_.end())
-    {
-        if (it_ns->second == token)
+        auto it_token = latest_state->token_to_ns.find(token);
+        if (it_token != latest_state->token_to_ns.end() && it_token->second != ns)
         {
+            return false;
+        }
+
+        auto it_ns = latest_state->ns_to_token.find(ns);
+        if (it_ns != latest_state->ns_to_token.end())
+        {
+            if (it_ns->second == token)
+            {
+                return true;
+            }
+            auto new_state = std::make_shared<StorageState>();
+            new_state->token_to_ns = latest_state->token_to_ns;
+            new_state->ns_to_token = latest_state->ns_to_token;
+            new_state->ns_to_id = latest_state->ns_to_id;
+            new_state->next_id = latest_state->next_id;
+
+            new_state->token_to_ns.erase(it_ns->second);
+            new_state->ns_to_token[std::string(ns)] = token;
+            new_state->token_to_ns.emplace(token, ns);
+
+            std::atomic_store(&state_, std::shared_ptr<const StorageState>(new_state));
             return true;
         }
-        token_to_ns_.erase(it_ns->second);
-        it_ns->second = token;
-        token_to_ns_.emplace(token, ns);
-        return true;
     }
 
-    token_to_ns_.emplace(token, ns);
-    ns_to_token_.emplace(ns, token);
-    uint64_t id = ++next_id_;
-    ns_to_id_.emplace(ns, EncodeBase255(id) + std::string{B255_DELIMITER});
+    auto new_state = std::make_shared<StorageState>();
+    if (latest_state)
+    {
+        new_state->token_to_ns = latest_state->token_to_ns;
+        new_state->ns_to_token = latest_state->ns_to_token;
+        new_state->ns_to_id = latest_state->ns_to_id;
+        new_state->next_id = latest_state->next_id;
+    }
+
+    new_state->token_to_ns.emplace(token, ns);
+    new_state->ns_to_token.emplace(ns, token);
+    uint64_t id = ++new_state->next_id;
+    new_state->ns_to_id.emplace(ns, EncodeBase255(id) + std::string{B255_DELIMITER});
+
+    std::atomic_store(&state_, std::shared_ptr<const StorageState>(new_state));
     return true;
 }
 
 bool MemoryNamespaceStorage::Del(std::string_view ns)
 {
-    std::unique_lock<std::shared_mutex> lock(mu_);
-    auto it_ns = ns_to_token_.find(ns);
-    if (it_ns != ns_to_token_.end())
+    std::lock_guard<std::mutex> lock(write_mu_);
+    auto latest_state = std::atomic_load(&state_);
+    if (!latest_state)
     {
-        token_to_ns_.erase(it_ns->second);
-        ns_to_id_.erase(std::string(ns));
-        ns_to_token_.erase(it_ns);
+        return false;
+    }
+
+    auto it_ns = latest_state->ns_to_token.find(ns);
+    if (it_ns != latest_state->ns_to_token.end())
+    {
+        auto new_state = std::make_shared<StorageState>();
+        new_state->token_to_ns = latest_state->token_to_ns;
+        new_state->ns_to_token = latest_state->ns_to_token;
+        new_state->ns_to_id = latest_state->ns_to_id;
+        new_state->next_id = latest_state->next_id;
+
+        new_state->token_to_ns.erase(it_ns->second);
+        new_state->ns_to_id.erase(std::string(ns));
+        new_state->ns_to_token.erase(std::string(ns));
+
+        std::atomic_store(&state_, std::shared_ptr<const StorageState>(new_state));
         return true;
     }
     return false;
@@ -73,11 +132,14 @@ bool MemoryNamespaceStorage::Del(std::string_view ns)
 
 std::string MemoryNamespaceStorage::GetToken(std::string_view ns)
 {
-    std::shared_lock<std::shared_mutex> lock(mu_);
-    auto it = ns_to_token_.find(ns);
-    if (it != ns_to_token_.end())
+    auto current_state = std::atomic_load(&state_);
+    if (current_state)
     {
-        return it->second;
+        auto it = current_state->ns_to_token.find(ns);
+        if (it != current_state->ns_to_token.end())
+        {
+            return it->second;
+        }
     }
     return "";
 }
@@ -86,24 +148,31 @@ std::string MemoryNamespaceStorage::GetNamespaceFromToken(std::string_view token
 {
     ns_id = "";
     epoch = 1;
-    std::shared_lock<std::shared_mutex> lock(mu_);
-    auto it = token_to_ns_.find(token);
-    if (it != token_to_ns_.end())
+    auto current_state = std::atomic_load(&state_);
+    if (current_state)
     {
-        auto it_id = ns_to_id_.find(it->second);
-        if (it_id != ns_to_id_.end())
+        auto it = current_state->token_to_ns.find(token);
+        if (it != current_state->token_to_ns.end())
         {
-            ns_id = it_id->second;
+            auto it_id = current_state->ns_to_id.find(it->second);
+            if (it_id != current_state->ns_to_id.end())
+            {
+                ns_id = it_id->second;
+            }
+            return it->second;
         }
-        return it->second;
     }
     return "";
 }
 
 std::map<std::string, std::string, std::less<>> MemoryNamespaceStorage::List()
 {
-    std::shared_lock<std::shared_mutex> lock(mu_);
-    return token_to_ns_;
+    auto current_state = std::atomic_load(&state_);
+    if (current_state)
+    {
+        return current_state->token_to_ns;
+    }
+    return {};
 }
 
 // ==========================================
@@ -111,12 +180,14 @@ std::map<std::string, std::string, std::less<>> MemoryNamespaceStorage::List()
 // ==========================================
 
 NamespaceManager::NamespaceManager()
-    : storage_(std::make_unique<MemoryNamespaceStorage>())
+    : storage_(std::make_unique<MemoryNamespaceStorage>()),
+      state_(std::make_shared<CacheState>())
 {
 }
 
 NamespaceManager::NamespaceManager(std::unique_ptr<INamespaceStorage> storage)
-    : storage_(std::move(storage))
+    : storage_(std::move(storage)),
+      state_(std::make_shared<CacheState>())
 {
 }
 
@@ -194,10 +265,11 @@ std::map<std::string, std::string, std::less<>> NamespaceManager::List() const
 
 std::shared_ptr<NamespaceMetadata> NamespaceManager::GetMetadataByToken(std::string_view token) const
 {
+    auto current_state = std::atomic_load(&state_);
+    if (current_state)
     {
-        std::shared_lock<std::shared_mutex> lock(meta_mu_);
-        auto it = token_metadata_.find(std::string(token));
-        if (it != token_metadata_.end())
+        auto it = current_state->token_metadata.find(std::string(token));
+        if (it != current_state->token_metadata.end())
         {
             return it->second;
         }
@@ -213,12 +285,23 @@ std::shared_ptr<NamespaceMetadata> NamespaceManager::GetMetadataByToken(std::str
             return nullptr;
         }
 
-        std::unique_lock<std::shared_mutex> lock(meta_mu_);
+        std::lock_guard<std::mutex> lock(write_mu_);
         // Double check
-        auto it = token_metadata_.find(std::string(token));
-        if (it != token_metadata_.end())
+        auto latest_state = std::atomic_load(&state_);
+        if (latest_state)
         {
-            return it->second;
+            auto it = latest_state->token_metadata.find(std::string(token));
+            if (it != latest_state->token_metadata.end())
+            {
+                return it->second;
+            }
+        }
+
+        auto new_state = std::make_shared<CacheState>();
+        if (latest_state)
+        {
+            new_state->ns_metadata = latest_state->ns_metadata;
+            new_state->token_metadata = latest_state->token_metadata;
         }
 
         auto meta = std::make_shared<NamespaceMetadata>();
@@ -226,8 +309,9 @@ std::shared_ptr<NamespaceMetadata> NamespaceManager::GetMetadataByToken(std::str
         meta->encoded_id = ns_id;
         meta->epoch.store(epoch);
 
-        token_metadata_[std::string(token)] = meta;
-        ns_metadata_[ns_name] = meta;
+        new_state->token_metadata[std::string(token)] = meta;
+        new_state->ns_metadata[ns_name] = meta;
+        std::atomic_store(&state_, std::shared_ptr<const CacheState>(new_state));
         return meta;
     }
 
@@ -236,12 +320,23 @@ std::shared_ptr<NamespaceMetadata> NamespaceManager::GetMetadataByToken(std::str
 
 std::shared_ptr<NamespaceMetadata> NamespaceManager::GetOrCreateMetadata(std::string_view ns_name, std::string_view encoded_id, uint64_t epoch)
 {
-    std::unique_lock<std::shared_mutex> lock(meta_mu_);
-    auto it = ns_metadata_.find(std::string(ns_name));
-    if (it != ns_metadata_.end())
+    std::lock_guard<std::mutex> lock(write_mu_);
+    auto latest_state = std::atomic_load(&state_);
+    if (latest_state)
     {
-        it->second->epoch.store(epoch);
-        return it->second;
+        auto it = latest_state->ns_metadata.find(std::string(ns_name));
+        if (it != latest_state->ns_metadata.end())
+        {
+            it->second->epoch.store(epoch);
+            return it->second;
+        }
+    }
+
+    auto new_state = std::make_shared<CacheState>();
+    if (latest_state)
+    {
+        new_state->ns_metadata = latest_state->ns_metadata;
+        new_state->token_metadata = latest_state->token_metadata;
     }
 
     auto meta = std::make_shared<NamespaceMetadata>();
@@ -249,30 +344,41 @@ std::shared_ptr<NamespaceMetadata> NamespaceManager::GetOrCreateMetadata(std::st
     meta->encoded_id = encoded_id;
     meta->epoch.store(epoch);
 
-    ns_metadata_[std::string(ns_name)] = meta;
+    new_state->ns_metadata[std::string(ns_name)] = meta;
+    std::atomic_store(&state_, std::shared_ptr<const CacheState>(new_state));
     return meta;
 }
 
 void NamespaceManager::RemoveMetadata(std::string_view ns_name)
 {
-    std::unique_lock<std::shared_mutex> lock(meta_mu_);
-    auto it = ns_metadata_.find(std::string(ns_name));
-    if (it != ns_metadata_.end())
+    std::lock_guard<std::mutex> lock(write_mu_);
+    auto latest_state = std::atomic_load(&state_);
+    if (!latest_state)
     {
-        for (auto token_it = token_metadata_.begin(); token_it != token_metadata_.end(); )
+        return;
+    }
+
+    auto it = latest_state->ns_metadata.find(std::string(ns_name));
+    if (it != latest_state->ns_metadata.end())
+    {
+        auto new_state = std::make_shared<CacheState>();
+        new_state->ns_metadata = latest_state->ns_metadata;
+        new_state->token_metadata = latest_state->token_metadata;
+
+        for (auto token_it = new_state->token_metadata.begin(); token_it != new_state->token_metadata.end(); )
         {
             if (token_it->second == it->second)
             {
-                token_it = token_metadata_.erase(token_it);
+                token_it = new_state->token_metadata.erase(token_it);
             }
             else
             {
                 ++token_it;
             }
         }
-        ns_metadata_.erase(it);
+        new_state->ns_metadata.erase(std::string(ns_name));
+        std::atomic_store(&state_, std::shared_ptr<const CacheState>(new_state));
     }
 }
 
 } // namespace EloqKV
-

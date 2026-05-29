@@ -8,8 +8,48 @@
 #include <unordered_map>
 #include <atomic>
 
+#include <mutex>
+#include <type_traits>
+#include <utility>
+
 namespace EloqKV
 {
+
+template <typename T>
+class RcuWrapper
+{
+public:
+    RcuWrapper() : state_(std::make_shared<T>()) {}
+    explicit RcuWrapper(std::shared_ptr<const T> state) : state_(std::move(state)) {}
+
+    std::shared_ptr<const T> Read() const
+    {
+        return std::atomic_load(&state_);
+    }
+
+    template <typename Func>
+    auto Update(Func&& func) -> decltype(func(std::declval<T&>()))
+    {
+        std::lock_guard<std::mutex> lock(write_mu_);
+        auto latest = std::atomic_load(&state_);
+        auto copy = std::make_shared<T>(*latest);
+        if constexpr (std::is_void_v<decltype(func(std::declval<T&>()))>)
+        {
+            func(*copy);
+            std::atomic_store(&state_, std::shared_ptr<const T>(copy));
+        }
+        else
+        {
+            auto res = func(*copy);
+            std::atomic_store(&state_, std::shared_ptr<const T>(copy));
+            return res;
+        }
+    }
+
+private:
+    std::shared_ptr<const T> state_;
+    mutable std::mutex write_mu_;
+};
 
 struct NamespaceMetadata
 {
@@ -30,6 +70,14 @@ public:
     virtual std::map<std::string, std::string, std::less<>> List() = 0;
 };
 
+struct StorageState
+{
+    std::map<std::string, std::string, std::less<>> token_to_ns;
+    std::map<std::string, std::string, std::less<>> ns_to_token;
+    std::map<std::string, std::string, std::less<>> ns_to_id;
+    uint64_t next_id{2};
+};
+
 class MemoryNamespaceStorage : public INamespaceStorage
 {
 public:
@@ -44,17 +92,19 @@ public:
     std::map<std::string, std::string, std::less<>> List() override;
 
 private:
-    mutable std::shared_mutex mu_;
-    std::map<std::string, std::string, std::less<>> token_to_ns_;
-    std::map<std::string, std::string, std::less<>> ns_to_token_;
-    std::map<std::string, std::string, std::less<>> ns_to_id_;
-    uint64_t next_id_{2};
+    RcuWrapper<StorageState> rcu_state_;
+};
+
+struct CacheState
+{
+    std::unordered_map<std::string, std::shared_ptr<NamespaceMetadata>> ns_metadata;
+    std::unordered_map<std::string, std::shared_ptr<NamespaceMetadata>> token_metadata;
 };
 
 class NamespaceManager
 {
 public:
-    NamespaceManager();
+    NamespaceManager() = default;
     explicit NamespaceManager(std::unique_ptr<INamespaceStorage> storage);
     ~NamespaceManager() = default;
 
@@ -77,9 +127,7 @@ public:
 
 private:
     std::unique_ptr<INamespaceStorage> storage_;
-    mutable std::shared_mutex meta_mu_;
-    mutable std::unordered_map<std::string, std::shared_ptr<NamespaceMetadata>> ns_metadata_;
-    mutable std::unordered_map<std::string, std::shared_ptr<NamespaceMetadata>> token_metadata_;
+    RcuWrapper<CacheState> rcu_state_;
 };
 
 } // namespace EloqKV
