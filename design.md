@@ -37,13 +37,15 @@ namespace = true
 - **`NamespaceGuard`**：使用 RAII 模式，在处理客户端请求的生命周期内，动态切换并自动恢复 `current_namespace` 变量。
 
 ### 1.2 键前缀隔离与范围扫描 (Key Prefixing & Range Scan Isolation)
-- **非碰撞前缀编码**：每个自定义命名空间都由系统分配唯一的 `uint64_t` 标识，并使用 `EncodeBase255` 进行 255 进制字符编码。
-  - `EncodeBase255` 产生的每个字符均在 `[1, 255]` 范围内，排除了 `\x00`。
-  - 最终的键前缀格式为：`[encoded_id] + \x00`。
-  - 默认命名空间（`default`）的 ID 为 0，前缀被统一硬编码为 `\x01\x00`。
-  - 因为 `\x00` 仅作为分隔符，且编码中不含 `\x00`，所以命名空间前缀与原始 key 之间保证了完全互斥、无碰撞。
+- **物理表级隔离与前缀隔离并存**：
+  - **默认命名空间（`default`）**：默认情况下，默认命名空间的数据是**无前缀的（prefixless）**，保持原生的 Key 编码。其数据单独路由到原有的物理数据库表（如 `data_table_0`, `data_table_1` 等）。
+    - *向下兼容*：如果在配置文件中设置了 `use_legacy_default_ns = true`，则默认命名空间将回退到旧版带 `\x01\x00` 前缀 of 编码格式。
+  - **自定义命名空间**：所有自定义命名空间共享单个物理表 `ns_data_table`。
+    - 各自定义命名空间在 `ns_data_table` 内使用独特的 Base-255 编码前缀实现前缀隔离。
+    - 每个自定义命名空间都有唯一的 `uint64_t` 标识，前缀格式为 `[encoded_id] + \x00`。
+    - 由于 `\x00` 仅作为前缀分隔符，且 `EncodeBase255` 编码中排除 `\x00`，因此保证了各个命名空间 Key 之间的无碰撞与安全隔离。
 - **透明包装**：
-  - `EloqKey` 在构造时通过 `CreateEloqStringFromNamespace` 透明地加上当前的命名空间前缀。
+  - `EloqKey` 在构造时通过 `CreateEloqStringFromNamespace` 透明地加上当前的命名空间前缀（对于默认命名空间，当 `use_legacy_default_ns` 为 `false` 时不加前缀）。
 - **范围限制 (`ComposeNamespaceKeyNext`)**：
   - 针对 `KEYS` / `SCAN` 范围查找，通过将起始 Key 定位为 `[encoded_id] + \x00`，结束 Key 定位为 `ComposeNamespaceKeyNext`（即 `[encoded_id] + \x01`），将检索边界严格限定在当前命名空间范围内。
 
@@ -65,10 +67,11 @@ namespace = true
    - 用于生成自增命名空间数字 ID 的全局计数器。
 
 ### 2.2 事务安全操作与级联删除 (Transactional Safety & Cascade Deletion)
-`RedisServiceImpl` 提供了全套的事务安全管理接口，包括添加、修改、删除和扫描列表。特别地，在删除操作中实现了**级联数据清空**：
+`RedisServiceImpl` 提供了全套的事务安全管理接口，包括添加、修改、删除和扫描列表。在删除与清理操作中实现了**级联数据清空与隔离清理**：
 - **元数据删除**：首先从 `__namespace` 系统表中删除口令、ID以及名称的双向映射记录。
-- **级联 Key 数据清空**：通过遍历所有的业务数据表 (`redis_table_names_`)，在打开扫描前先读取各表的表元数据信息（通过读取 `catalog_ccm_name` 锁定并获取最新的 `schema_version`），然后对每个表发起范围扫描请求 (`ScanOpenTxRequest`)。扫描边界限定在 `[ns_prefix, ns_prefix_next)` 内（即以该命名空间编码 ID 为前缀的所有用户 Key），并将扫描到的记录批量以 `DelCommand` 形式在同一个事务内全部删除，实现彻底的数据原子级级联清空。
-- **对象生命周期延伸**：为避免悬空指针（UAF）风险，所有参与事务的 `EloqKey`、`Command` 及 `TxRequest`（包括大批量级联删除创建的批量临时删除对象）其生命周期均通过函数作用域外的容器进行严格的生命周期延伸绑定，保证在 `CommitTx` 完成前绝对不被析构。
+- **级联 Key 数据清空**：自定义命名空间删除时，只需针对共享的 `ns_data_table` 单个物理表进行范围扫描（边界限定在 `[ns_prefix, ns_prefix_next)` 内，即以该命名空间编码 ID 为前缀的所有租户 Key），并将扫描到的记录批量在同一个事务内全部删除，实现彻底的数据原子级级联清空。
+- **租户级独立清理 (`FLUSHDB` / `FLUSHALL`)**：对于自定义命名空间，`FLUSHDB` 和 `FLUSHALL` 命令被拦截为逻辑清理，而非直接 Truncate 物理表。系统同样在 `ns_data_table` 表内进行前缀范围扫描，批量删除该命名空间下的所有 Key，并利用事务级元数据计数器重置 Key 计数，从而保证了清理操作对其他租户完全透明且互不干扰。
+- **对象生命周期延伸**：为避免悬空指针（UAF）风险，所有参与事务的 `EloqKey`、`Command` 及 `TxRequest`（包括大批量级联删除或 FLUSHDB 批量删除创建的临时对象）其生命周期均通过容器进行严格的生命周期延伸绑定，保证在 `CommitTx` 完成前绝对不被析构。
 
 ---
 
@@ -79,8 +82,9 @@ namespace = true
   - 客户端通过 `AUTH <password>` 进行身份认证。
   - 若 `password` 匹配命名空间表中的 `token`，该连接上下文的 `ctx->ns` 和 `ctx->ns_id` 将被分别绑定为对应的命名空间名称及其编码后的 ID，后续此连接发起的所有操作均透明地路由至该命名空间。
   - 若匹配系统全局 `requirepass`，则绑定至 `default` 命名空间。
-- **管理权限收敛**：
-  - 只有处于 `default` 命名空间（即使用 `requirepass` 登录）的客户端，才允许执行 `namespace add/get/del/refresh` 等管理操作。
+- **命令与管理权限限制**：
+  - **禁止 SELECT 命令**：为确保租户数据安全并简化物理管理，自定义命名空间内的客户端禁止执行 `SELECT` 命令切换数据库。若尝试执行将直接拒绝并返回特定的错误。
+  - **管理权限收敛**：只有处于 `default` 命名空间（即使用 `requirepass` 登录）的客户端，才允许执行 `namespace add/get/del/refresh` 等管理操作。
   - 处于自定义命名空间的客户端执行管理子命令时会被拒绝，返回特定错误。
   - 当启用集群模式 (`FLAGS_cluster_mode`) 或 `requirepass` 为空时，禁止所有的命名空间管理操作。
 
