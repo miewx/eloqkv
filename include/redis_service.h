@@ -153,7 +153,7 @@ class RedisCommandHandler;
 class RedisConnectionContext;
 class MultiTransactionHandler;
 class RedisServiceImpl;
-class DbNamespaceStorage;
+class NamespaceStorage;
 
 const std::unordered_set<std::string> redis_config_keys = {
     "slowlog-log-slower-than",
@@ -162,7 +162,7 @@ const std::unordered_set<std::string> redis_config_keys = {
 
 class RedisServiceImpl : public brpc::RedisService
 {
-    friend class DbNamespaceStorage;
+    friend class NamespaceStorage;
 public:
     explicit RedisServiceImpl(const std::string &config_file,
                               const char *version);
@@ -224,6 +224,16 @@ public:
                            RedisCommandHandler *handler);
 
     NamespaceManager *GetNamespaceManager() { return &namespace_manager_; }
+
+    bool IsStopping() const
+    {
+        return stopping_indicator_.load(std::memory_order_acquire);
+    }
+
+    const TableName* NamespaceTableName() const { return namespace_table_name_.get(); }
+    const TableName* NsDataTableName() const { return ns_data_table_name_.get(); }
+
+    bool ExecuteNamespaceTxRequest(TransactionExecution *txm, TxRequest *tx_req);
 
     // TLS configuration accessors
     bool IsTlsEnabled() const
@@ -504,19 +514,6 @@ public:
 
     size_t MaxConnectionCount() const;
 
-private:
-    static void* NamespaceGCDaemonRoutine(void* arg);
-    void RunNamespaceGCDaemon();
-    std::vector<std::string> ScanGCRecords();
-    bool CleanPrefixKeys(const std::string& old_prefix);
-    void DeleteGCRecord(const std::string& gc_key);
-
-    NamespaceToken GetNamespaceTokenFromDB(std::string_view ns);
-    std::string GetNamespaceFromTokenFromDB(const NamespaceToken &token, std::string &ns_id, uint64_t &epoch);
-    bool AddNamespaceToDB(std::string_view ns, const NamespaceToken &token);
-    bool SetNamespaceInDB(std::string_view ns, const NamespaceToken &token);
-    bool DelNamespaceFromDB(std::string_view ns);
-    std::map<NamespaceToken, std::string> ListNamespacesFromDB();
 
     static bool SendTxRequest(TransactionExecution *txm,
                               TxRequest *tx_req,
@@ -577,7 +574,6 @@ private:
     std::unordered_map<std::string, std::string> scripts_;
 
     NamespaceManager namespace_manager_;
-    bthread_t ns_gc_tid_{};
 
     // use atomic variable to protect config_. We do not use mutex here because
     // we might jump to other task groups when updating config_, so using mutex

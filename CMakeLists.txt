@@ -357,7 +357,8 @@ SET(RESELOQ_RESOURCES
     src/lua_interpreter.cpp
     src/pub_sub_manager.cpp
     src/namespace/manager.cpp
-    src/namespace/db_storage.cpp
+    src/namespace/storage.cpp
+    src/namespace/gc.cpp
     src/b255_encode.cpp
     src/redis_service.cpp
     src/redis_command.cpp

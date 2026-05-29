@@ -79,13 +79,15 @@ class INamespaceStorage
 public:
     virtual ~INamespaceStorage() = default;
     virtual NamespaceToken GetToken(std::string_view ns) = 0;
-    virtual std::string GetNamespaceFromToken(const NamespaceToken &token,
-                                              std::string &ns_id,
-                                              uint64_t &epoch) = 0;
+    virtual std::string ByToken(const NamespaceToken &token,
+                                std::string &ns_id,
+                                uint64_t &epoch) = 0;
     virtual bool Add(std::string_view ns, const NamespaceToken &token) = 0;
     virtual bool Set(std::string_view ns, const NamespaceToken &token) = 0;
     virtual bool Del(std::string_view ns) = 0;
     virtual std::map<NamespaceToken, std::string> List() = 0;
+    virtual void StartGCDaemon() {}
+    virtual void StopGCDaemon() {}
 };
 
 struct StorageState
@@ -106,9 +108,9 @@ public:
     bool Set(std::string_view ns, const NamespaceToken &token) override;
     bool Del(std::string_view ns) override;
     NamespaceToken GetToken(std::string_view ns) override;
-    std::string GetNamespaceFromToken(const NamespaceToken &token,
-                                      std::string &ns_id,
-                                      uint64_t &epoch) override;
+    std::string ByToken(const NamespaceToken &token,
+                        std::string &ns_id,
+                        uint64_t &epoch) override;
     std::map<NamespaceToken, std::string> List() override;
 
 private:
@@ -146,6 +148,9 @@ public:
     std::shared_ptr<NamespaceMetadata> GetMetadataByToken(
         const NamespaceToken &token) const;
     void RemoveMetadata(std::string_view ns_name);
+
+    void StartGCDaemon() { if (storage_) storage_->StartGCDaemon(); }
+    void StopGCDaemon() { if (storage_) storage_->StopGCDaemon(); }
 
 private:
     std::unique_ptr<INamespaceStorage> storage_;

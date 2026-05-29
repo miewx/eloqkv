@@ -100,7 +100,7 @@ NamespaceToken MemoryNamespaceStorage::GetToken(std::string_view ns)
     return NamespaceToken();
 }
 
-std::string MemoryNamespaceStorage::GetNamespaceFromToken(
+std::string MemoryNamespaceStorage::ByToken(
     const NamespaceToken &token, std::string &ns_id, uint64_t &epoch)
 {
     ns_id = "";
@@ -199,7 +199,7 @@ std::string NamespaceManager::GetByToken(const NamespaceToken &token,
     if (storage_)
     {
         uint64_t dummy_epoch = 1;
-        return storage_->GetNamespaceFromToken(token, ns_id, dummy_epoch);
+        return storage_->ByToken(token, ns_id, dummy_epoch);
     }
     ns_id = "";
     return "";
@@ -236,7 +236,7 @@ std::shared_ptr<NamespaceMetadata> NamespaceManager::GetMetadataByToken(
         std::string ns_id;
         uint64_t epoch = 1;
         std::string ns_name =
-            storage_->GetNamespaceFromToken(token, ns_id, epoch);
+            storage_->ByToken(token, ns_id, epoch);
         if (ns_name.empty())
         {
             return nullptr;
