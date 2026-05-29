@@ -4,17 +4,11 @@
 
 ---
 
-## 0. 兼容性与配置设计 (Compatibility & Configuration)
+## 0. 隔离与多租户隔离架构设计 (Isolation & Multi-Tenant Design)
 
-### 0.1 向下兼容与默认行为 (Default Prefixless Behavior)
-默认情况下，本版本移除了对 `namespace` 显式开关配置的要求，**命名空间隔离机制默认始终启用**：
-- **默认命名空间（`default`）**：默认数据是无前缀的（prefixless），即直接路由到原有的物理数据库表（如 `data_table_0`, `data_table_1` 等），行为与没有命名空间的原版逻辑完全一致。
-- **自定义命名空间**：通过 `AUTH <token>` 认证的客户端，数据会自动路由到共享的物理表 `ns_data_table`，并在内部采用独特的 Base-255 编码前缀实现前缀隔离。这避免了为每个命名空间创建物理表的系统开销。
-
-### 0.2 历史兼容切换配置 (Legacy Compatibility Mode)
-为保持对历史版本的完全兼容（在历史版本中，`default` 命名空间也带前缀 `\x01\x00`）：
-- 如果在配置文件 `eloqkv.ini` 的 `[local]` 段下显式设置 `namespace = true`，系统将启用**历史兼容模式**（即 `use_legacy_default_ns = true`）。
-- 在历史兼容模式下，默认命名空间的数据也会透明加上 `\x01\x00` 的前缀，从而与旧版数据保持一致。
+命名空间隔离机制是 EloqKV 服务端默认开启的内置功能，不需要任何显式的开关配置：
+- **默认命名空间（`default`）**：默认数据是**无前缀的（prefixless）**，数据直接路由至原有的各个物理数据库表（如 `data_table_0`, `data_table_1` 等），其行为与原生 Redis 逻辑完全一致。
+- **自定义命名空间**：所有自定义命名空间均共享单个物理表 `ns_data_table`。通过 `AUTH <token>` 认证的客户端，其数据会自动路由到 `ns_data_table` 内，采用独特的 Base-255 编码前缀实现完全隔离。这避免了为每个命名空间创建物理表的系统开销。
 
 ---
 
@@ -33,14 +27,13 @@
 
 ### 1.2 键前缀隔离与范围扫描 (Key Prefixing & Range Scan Isolation)
 - **物理表级隔离与前缀隔离并存**：
-  - **默认命名空间（`default`）**：默认情况下，默认命名空间的数据是**无前缀的（prefixless）**，保持原生的 Key 编码。其数据单独路由到原有的物理数据库表（如 `data_table_0`, `data_table_1` 等）。
-    - *向下兼容*：如果在配置文件中设置了 `use_legacy_default_ns = true`，则默认命名空间将回退到旧版带 `\x01\x00` 前缀 of 编码格式。
+  - **默认命名空间（`default`）**：默认情况下，默认命名空间的数据是**无前缀的（prefixless）**，保持原生的 Key 编码。其数据直接路由至原有的物理数据库表（如 `data_table_0`, `data_table_1` 等）。
   - **自定义命名空间**：所有自定义命名空间共享单个物理表 `ns_data_table`。
     - 各自定义命名空间在 `ns_data_table` 内使用独特的 Base-255 编码前缀实现前缀隔离。
     - 每个自定义命名空间都有唯一的 `uint64_t` 标识，前缀格式为 `[encoded_id] + \x00`。
     - 由于 `\x00` 仅作为前缀分隔符，且 `EncodeBase255` 编码中排除 `\x00`，因此保证了各个命名空间 Key 之间的无碰撞与安全隔离。
 - **透明包装**：
-  - `EloqKey` 在构造时通过 `CreateEloqStringFromNamespace` 透明地加上当前的命名空间前缀（对于默认命名空间，当 `use_legacy_default_ns` 为 `false` 时不加前缀）。
+  - `EloqKey` 在构造时通过 `CreateEloqStringFromNamespace` 透明地加上当前的命名空间前缀（对于默认命名空间不加前缀）。
 - **范围限制 (`ComposeNamespaceKeyNext`)**：
   - 针对 `KEYS` / `SCAN` 范围查找，通过将起始 Key 定位为 `[encoded_id] + \x00`，结束 Key 定位为 `ComposeNamespaceKeyNext`（即 `[encoded_id] + \x01`），将检索边界严格限定在当前命名空间范围内。
 
