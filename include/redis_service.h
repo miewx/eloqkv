@@ -38,7 +38,7 @@
 #include "eloq_metrics/include/meter.h"
 #include "eloqkv_catalog_factory.h"
 #include "error_messages.h"
-#include "namespace_manager.h"
+#include "namespace/manager.h"
 #include "lua_interpreter.h"
 #include "pub_sub_manager.h"
 #include "redis_command.h"
@@ -152,6 +152,8 @@ struct RedisTable
 class RedisCommandHandler;
 class RedisConnectionContext;
 class MultiTransactionHandler;
+class RedisServiceImpl;
+class DbNamespaceStorage;
 
 const std::unordered_set<std::string> redis_config_keys = {
     "slowlog-log-slower-than",
@@ -160,6 +162,7 @@ const std::unordered_set<std::string> redis_config_keys = {
 
 class RedisServiceImpl : public brpc::RedisService
 {
+    friend class DbNamespaceStorage;
 public:
     explicit RedisServiceImpl(const std::string &config_file,
                               const char *version);
@@ -208,7 +211,7 @@ public:
     size_t GetRedisTableCount() const;
 
     bool AuthRequired(const RedisConnectionContext *ctx,
-                      const butil::StringPiece &command) const;
+                      const std::vector<butil::StringPiece> &args) const;
 
     brpc::RedisCommandHandlerResult DispatchCommand(
         brpc::ConnectionContext *ctx,
@@ -221,12 +224,6 @@ public:
                            RedisCommandHandler *handler);
 
     NamespaceManager *GetNamespaceManager() { return &namespace_manager_; }
-    std::string GetNamespaceTokenFromDB(std::string_view ns);
-    std::string GetNamespaceFromTokenFromDB(std::string_view token, std::string &ns_id);
-    bool AddNamespaceToDB(std::string_view ns, std::string_view token);
-    bool SetNamespaceInDB(std::string_view ns, std::string_view token);
-    bool DelNamespaceFromDB(std::string_view ns);
-    std::map<std::string, std::string, std::less<>> ListNamespacesFromDB();
 
     // TLS configuration accessors
     bool IsTlsEnabled() const
@@ -508,6 +505,19 @@ public:
     size_t MaxConnectionCount() const;
 
 private:
+    static void* NamespaceGCDaemonRoutine(void* arg);
+    void RunNamespaceGCDaemon();
+    std::vector<std::string> ScanGCRecords();
+    bool CleanPrefixKeys(const std::string& old_prefix);
+    void DeleteGCRecord(const std::string& gc_key);
+
+    NamespaceToken GetNamespaceTokenFromDB(std::string_view ns);
+    std::string GetNamespaceFromTokenFromDB(const NamespaceToken &token, std::string &ns_id, uint64_t &epoch);
+    bool AddNamespaceToDB(std::string_view ns, const NamespaceToken &token);
+    bool SetNamespaceInDB(std::string_view ns, const NamespaceToken &token);
+    bool DelNamespaceFromDB(std::string_view ns);
+    std::map<NamespaceToken, std::string> ListNamespacesFromDB();
+
     static bool SendTxRequest(TransactionExecution *txm,
                               TxRequest *tx_req,
                               OutputHandler *error);
@@ -567,6 +577,7 @@ private:
     std::unordered_map<std::string, std::string> scripts_;
 
     NamespaceManager namespace_manager_;
+    bthread_t ns_gc_tid_{};
 
     // use atomic variable to protect config_. We do not use mutex here because
     // we might jump to other task groups when updating config_, so using mutex

@@ -1490,14 +1490,15 @@ void PingCommand::Execute(RedisServiceImpl *redis_impl,
 void AuthCommand::Execute(RedisServiceImpl *redis_impl,
                           RedisConnectionContext *ctx)
 {
-    std::string ns_id;
-    std::string ns = redis_impl->GetNamespaceManager()->GetByToken(password_, ns_id);
-    if (!ns.empty())
+    NamespaceToken token = NamespaceToken::FromBase64Url(password_);
+    auto ns_meta = token.valid ? redis_impl->GetNamespaceManager()->GetMetadataByToken(token) : nullptr;
+    if (ns_meta)
     {
         result_.err_code_ = RD_OK;
         ctx->authenticated = true;
-        ctx->ns = std::move(ns);
-        ctx->ns_id = std::move(ns_id);
+        ctx->ns = ns_meta->ns_name;
+        ctx->ns_meta = ns_meta;
+        ctx->ns_id = NamespacePrefix::MakePrefixV1(ns_meta->encoded_id, ns_meta->epoch.load(std::memory_order_relaxed));
     }
     else if (password_ == requirepass)
     {
@@ -1505,6 +1506,7 @@ void AuthCommand::Execute(RedisServiceImpl *redis_impl,
         ctx->authenticated = true;
         ctx->ns = "default";
         ctx->ns_id = "";
+        ctx->ns_meta = nullptr;
     }
     else
     {
@@ -1524,63 +1526,25 @@ void AuthCommand::OutputResult(OutputHandler *reply) const
         reply->OnError(redis_get_error_messages(RD_ERR_WRONG_PASS));
     }
 }
-
-static std::string Base64UrlEncode(const uint8_t *data, size_t length)
+static NamespaceToken GenerateRandomToken()
 {
-    static const char lookup[] =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-
-    std::string result;
-    result.reserve((length + 2) / 3 * 4);
-
-    size_t i = 0;
-    for (; i + 2 < length; i += 3)
-    {
-        uint32_t val = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
-        result.push_back(lookup[(val >> 18) & 0x3F]);
-        result.push_back(lookup[(val >> 12) & 0x3F]);
-        result.push_back(lookup[(val >> 6) & 0x3F]);
-        result.push_back(lookup[val & 0x3F]);
-    }
-
-    if (i < length)
-    {
-        uint32_t val = data[i] << 16;
-        if (i + 1 < length)
-        {
-            val |= data[i + 1] << 8;
-        }
-
-        result.push_back(lookup[(val >> 18) & 0x3F]);
-        result.push_back(lookup[(val >> 12) & 0x3F]);
-
-        if (i + 1 < length)
-        {
-            result.push_back(lookup[(val >> 6) & 0x3F]);
-        }
-    }
-
-    return result;
-}
-
-static std::string GenerateRandomToken()
-{
-    uint8_t bytes[16];
-    if (RAND_bytes(bytes, 16) != 1)
+    NamespaceToken token;
+    if (RAND_bytes(token.bytes, 16) != 1)
     {
         std::random_device rd;
         for (size_t i = 0; i < 4; ++i)
         {
             uint32_t val = rd();
-            std::memcpy(&bytes[i * 4], &val, 4);
+            std::memcpy(&token.bytes[i * 4], &val, 4);
         }
     }
 
     // Format as UUID Version 4
-    bytes[6] = (bytes[6] & 0x0f) | 0x40; // Set version to 4
-    bytes[8] = (bytes[8] & 0x3f) | 0x80; // Set variant to RFC 4122
+    token.bytes[6] = (token.bytes[6] & 0x0f) | 0x40; // Set version to 4
+    token.bytes[8] = (token.bytes[8] & 0x3f) | 0x80; // Set variant to RFC 4122
+    token.valid = true;
 
-    return Base64UrlEncode(bytes, 16);
+    return token;
 }
 
 void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
@@ -1625,7 +1589,7 @@ void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
             for (auto &pair : list)
             {
                 result_.list_val.push_back(pair.second); // namespace
-                result_.list_val.push_back(pair.first);  // token
+                result_.list_val.push_back(pair.first);  // token (already encoded string in map key!)
             }
         }
         else
@@ -1657,8 +1621,8 @@ void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
             result_.err_msg = "ERR namespace length must be between 1 and 255 bytes";
             return;
         }
-        std::string token = GenerateRandomToken();
-        while (token == requirepass)
+        NamespaceToken token = GenerateRandomToken();
+        while (token.ToString() == requirepass)
         {
             token = GenerateRandomToken();
         }
@@ -1666,7 +1630,7 @@ void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
         if (ok)
         {
             result_.success = true;
-            result_.str_val = token;
+            result_.str_val = token.ToString();
         }
         else
         {
@@ -1695,8 +1659,8 @@ void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
             result_.err_msg = "ERR namespace not found";
             return;
         }
-        std::string token = GenerateRandomToken();
-        while (token == requirepass || token == old_token)
+        NamespaceToken token = GenerateRandomToken();
+        while (token.ToString() == requirepass || token.ToString() == old_token)
         {
             token = GenerateRandomToken();
         }
@@ -1704,7 +1668,7 @@ void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
         if (ok)
         {
             result_.success = true;
-            result_.str_val = token;
+            result_.str_val = token.ToString();
         }
         else
         {
@@ -2348,8 +2312,12 @@ void DBSizeCommand::Execute(RedisServiceImpl *redis_impl,
 
             txm->Execute(&scan_batch_req);
             scan_batch_req.Wait();
-            success = !scan_batch_req.IsError();
-            if (!success) break;
+            if (scan_batch_req.IsError())
+            {
+                txservice::AbortTx(txm);
+                total_db_size_ = 0;
+                return;
+            }
 
             for (const auto &tuple : scan_batch)
             {
@@ -10598,23 +10566,31 @@ std::tuple<bool, NamespaceCommand> ParseNamespaceCommand(
     const std::vector<std::string_view> &args, OutputHandler *output)
 {
     assert(args[0] == "namespace");
-    if (args.size() == 2 && args[1] == "current")
+    if (args.size() < 2)
+    {
+        output->OnError("ERR NAMESPACE subcommand must be one of GET, DEL, ADD, REFRESH and CURRENT");
+        return {false, NamespaceCommand()};
+    }
+    std::string subcommand(args[1]);
+    std::transform(subcommand.begin(), subcommand.end(), subcommand.begin(), ::tolower);
+
+    if (args.size() == 2 && subcommand == "current")
     {
         return {true, NamespaceCommand("current", "", "")};
     }
-    else if (args.size() == 3 && args[1] == "get")
+    else if (args.size() == 3 && subcommand == "get")
     {
         return {true, NamespaceCommand("get", args[2], "")};
     }
-    else if (args.size() == 3 && args[1] == "del")
+    else if (args.size() == 3 && subcommand == "del")
     {
         return {true, NamespaceCommand("del", args[2], "")};
     }
-    else if (args.size() == 3 && args[1] == "add")
+    else if (args.size() == 3 && subcommand == "add")
     {
         return {true, NamespaceCommand("add", args[2], "")};
     }
-    else if (args.size() == 3 && args[1] == "refresh")
+    else if (args.size() == 3 && subcommand == "refresh")
     {
         return {true, NamespaceCommand("refresh", args[2], "")};
     }

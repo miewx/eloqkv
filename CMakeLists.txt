@@ -15,6 +15,16 @@
 cmake_minimum_required(VERSION 3.12)
 project(eloqkv C CXX)
 
+# Enable ccache if available
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+    set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    message(STATUS "ccache enabled")
+endif()
+
+include_directories(BEFORE "/opt/homebrew/Cellar/protobuf@33/33.6/include")
+
 # Install dependencies to compile redis_cli:
 # With apt:
 # sudo apt-get install libreadline-dev
@@ -23,9 +33,10 @@ project(eloqkv C CXX)
 # sudo yum install readline-devel
 # sudo yum install ncurses-devel
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 
 add_compile_definitions(ELOQ_MODULE_ELOQKV)
+add_compile_definitions(GLOG_USE_GLOG_EXPORT)
 
 # Option to build as library for converged binary
 option(BUILD_ELOQKV_AS_LIBRARY "Build eloqkv as library instead of executable" OFF)
@@ -70,6 +81,9 @@ ENDIF()
 option(LINK_SO "Whether examples are linked dynamically" ON)
 
 option(BRPC_WITH_GLOG "With glog" ON)
+if(BRPC_WITH_GLOG)
+    add_compile_definitions(BRPC_WITH_GLOG=1)
+endif()
 
 option(ABSL_PROPAGATE_CXX_STD "ABSL PROPAGATE CXX STD" ON)
 
@@ -331,6 +345,21 @@ if(VECTOR_INDEX_ENABLED)
     set(DYNAMIC_LIB ${DYNAMIC_LIB} ${CURL_LIBRARIES})
 endif()
 
+# Set up base include directories
+set(INCLUDE_DIRS
+    ${PROJECT_SOURCE_DIR}/
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/include/namespace
+    ${PROJECT_SOURCE_DIR}/include/redis
+)
+
+if(VECTOR_INDEX_ENABLED)
+    set(INCLUDE_DIRS ${INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/include/vector)
+endif()
+
+# Apply all includes at once
+include_directories(${INCLUDE_DIRS})
+
 # Build data_substrate library first
 if(NOT BUILD_ELOQKV_AS_LIBRARY)
     # Build data_substrate library first (standalone mode)
@@ -354,6 +383,9 @@ SET(RESELOQ_RESOURCES
     src/eloq_string.cpp
     src/lua_interpreter.cpp
     src/pub_sub_manager.cpp
+    src/namespace/manager.cpp
+    src/namespace/db_storage.cpp
+    src/b255_encode.cpp
     src/redis_service.cpp
     src/redis_command.cpp
     src/redis_object.cpp
@@ -394,19 +426,7 @@ SET(RESELOQ_LIBRARY ${RESELOQ_LIBRARY} data_substrate)
 SET(CRCSPEED_SOURCES crcspeed/crcspeed.c crcspeed/crc16speed.c crcspeed/crc64speed.c)
 SET(RESELOQ_RESOURCES ${RESELOQ_RESOURCES} ${CRCSPEED_SOURCES})
 
-# Set up base include directories
-set(INCLUDE_DIRS
-    ${PROJECT_SOURCE_DIR}/
-    ${PROJECT_SOURCE_DIR}/include
-    ${PROJECT_SOURCE_DIR}/include/redis
-)
 
-if(VECTOR_INDEX_ENABLED)
-    set(INCLUDE_DIRS ${INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/include/vector)
-endif()
-
-# Apply all includes at once
-include_directories(${INCLUDE_DIRS})
 
 set(ABSEIL
     absl::btree

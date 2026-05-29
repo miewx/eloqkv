@@ -1,6 +1,7 @@
 #include "b255_encode.h"
 #include <algorithm>
 #include <cstdint>
+#include <string_view>
 
 namespace EloqKV
 {
@@ -22,6 +23,17 @@ std::string EncodeBase255(uint64_t id)
     }
     std::reverse(result.begin(), result.end());
     return result;
+}
+
+uint64_t DecodeBase255(std::string_view s)
+{
+    uint64_t id = 0;
+    for (char c : s)
+    {
+        uint64_t digit = static_cast<unsigned char>(c) - 1;
+        id = id * 255 + digit;
+    }
+    return id;
 }
 
 } // namespace EloqKV

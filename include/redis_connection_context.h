@@ -38,6 +38,7 @@
 #include "redis_object.h"
 #include "redis_stats.h"
 #include "b255_encode.h"
+#include "namespace/manager.h"
 
 namespace EloqKV
 {
@@ -59,7 +60,10 @@ struct BucketScanCursor
 class RedisConnectionContext : public brpc::ConnectionContext
 {
 public:
-    RedisConnectionContext() : output(&arena) {};
+    RedisConnectionContext() : output(&arena)
+    {
+        InitNamespaceState();
+    }
     explicit RedisConnectionContext(brpc::Socket *sock, PubSubManager *mgr)
         : socket(sock),
           connect_time_us(
@@ -71,6 +75,7 @@ public:
           pub_sub_mgr(mgr)
     {
         RedisStats::IncrConnReceived();
+        InitNamespaceState();
     }
 
     ~RedisConnectionContext() override;
@@ -115,6 +120,7 @@ public:
     int db_id{0};
     std::string ns{"default"};
     std::string ns_id{""};
+    std::shared_ptr<NamespaceMetadata> ns_meta{nullptr};
 
     int64_t connect_time_us{0};
     size_t scan_cursor_cnt{0};
@@ -153,6 +159,13 @@ public:
 
     friend class RedisServiceImpl;
     friend class PubSubManager;
+
+private:
+    void InitNamespaceState()
+    {
+        ns = "default";
+        ns_id = "";
+    }
 };
 
 }  // namespace EloqKV

@@ -20,6 +20,7 @@
  *
  */
 #include "redis_service.h"
+#include "namespace/db_storage.h"
 
 #include <nlohmann/json.hpp>
 #include <absl/types/span.h>
@@ -194,7 +195,7 @@ std::vector<uint32_t> next_slow_log_unique_id_;
 
 RedisServiceImpl::RedisServiceImpl(const std::string &config_file,
                                    const char *version)
-    : namespace_manager_(this)
+    : namespace_manager_(std::make_unique<DbNamespaceStorage>(this))
 {
     version_ = version;
     config_file_ = config_file;
@@ -695,6 +696,13 @@ bool RedisServiceImpl::Start(brpc::Server &brpc_server)
     }
 #endif
 
+    // Start Namespace GC Daemon bthread
+    if (bthread_start_background(&ns_gc_tid_, nullptr, NamespaceGCDaemonRoutine, this) != 0)
+    {
+        LOG(ERROR) << "Failed to start namespace GC daemon bthread";
+        return false;
+    }
+
     return true;
 }
 
@@ -712,6 +720,11 @@ void RedisServiceImpl::Stop()
 #endif
     // stopping other service like metrics collector
     stopping_indicator_.store(true, std::memory_order_release);
+    if (ns_gc_tid_ != 0)
+    {
+        bthread_join(ns_gc_tid_, nullptr);
+        ns_gc_tid_ = 0;
+    }
     if (metrics_collector_thd_.has_value() &&
         metrics_collector_thd_->joinable())
     {
@@ -2662,17 +2675,209 @@ std::string GetCurrentTimeAsString()
     return oss.str();
 }
 
-bool RedisServiceImpl::ExecuteFlushDBCommand(
-    RedisConnectionContext *ctx,
-    txservice::TransactionExecution *txm,
-    EloqKV::OutputHandler *output,
-    bool auto_commit)
+void* RedisServiceImpl::NamespaceGCDaemonRoutine(void* arg)
 {
-    if (ctx && ctx->ns != "default" && !ctx->ns.empty())
+    RedisServiceImpl* server = static_cast<RedisServiceImpl*>(arg);
+    server->RunNamespaceGCDaemon();
+    return nullptr;
+}
+
+void RedisServiceImpl::RunNamespaceGCDaemon()
+{
+    LOG(INFO) << "Namespace GC daemon started.";
+    while (!stopping_indicator_.load(std::memory_order_relaxed))
     {
-        std::string ns_prefix = ctx->ns_id;
-        std::string ns_prefix_next = ComposeNamespaceKeyNext(ns_prefix);
-        const TableName &table_name = *ns_data_table_name_;
+        std::vector<std::string> gc_records = ScanGCRecords();
+        if (stopping_indicator_.load(std::memory_order_relaxed))
+        {
+            break;
+        }
+
+        if (gc_records.empty())
+        {
+            for (int i = 0; i < 300; ++i)
+            {
+                if (stopping_indicator_.load(std::memory_order_relaxed))
+                {
+                    break;
+                }
+                bthread_usleep(100 * 1000); // 100ms
+            }
+            continue;
+        }
+
+        for (const auto& gc_key : gc_records)
+        {
+            if (stopping_indicator_.load(std::memory_order_relaxed))
+            {
+                break;
+            }
+
+            size_t first_colon = gc_key.find(':', 2);
+            if (first_colon == std::string::npos)
+            {
+                DeleteGCRecord(gc_key);
+                continue;
+            }
+            std::string encoded_ns_id = gc_key.substr(2, first_colon - 2);
+            std::string epoch_str = gc_key.substr(first_colon + 1);
+            uint64_t epoch = 0;
+            try
+            {
+                epoch = std::stoull(epoch_str);
+            }
+            catch (...)
+            {
+                DeleteGCRecord(gc_key);
+                continue;
+            }
+
+            std::string old_prefix = NamespacePrefix::MakePrefixV1(encoded_ns_id, epoch);
+            LOG(INFO) << "Namespace GC: cleaning prefix " << old_prefix << " (record: " << gc_key << ")";
+
+            bool cleanup_complete = CleanPrefixKeys(old_prefix);
+            if (cleanup_complete)
+            {
+                DeleteGCRecord(gc_key);
+                LOG(INFO) << "Namespace GC: completed cleaning prefix " << old_prefix;
+            }
+
+            bthread_usleep(10 * 1000); // 10ms
+        }
+    }
+    LOG(INFO) << "Namespace GC daemon stopped.";
+}
+
+std::vector<std::string> RedisServiceImpl::ScanGCRecords()
+{
+    std::vector<std::string> gc_records;
+    TransactionExecution *txm = NewTxm(IsolationLevel::ReadCommitted, CcProtocol::OccRead);
+    if (txm == nullptr)
+    {
+        return {};
+    }
+
+    const TableName &table_name = *namespace_table_name_;
+    CatalogKey catalog_key(table_name);
+    TxKey cat_tx_key(&catalog_key);
+    CatalogRecord catalog_rec;
+    ReadTxRequest read_req(&txservice::catalog_ccm_name,
+                           0,
+                           &cat_tx_key,
+                           &catalog_rec,
+                           false,
+                           false,
+                           true,
+                           0,
+                           false,
+                           false,
+                           false,
+                           nullptr,
+                           nullptr,
+                           txm);
+    txm->Execute(&read_req);
+    read_req.Wait();
+    if (read_req.IsError())
+    {
+        txservice::AbortTx(txm);
+        return {};
+    }
+    uint64_t schema_version = catalog_rec.SchemaTs();
+
+    EloqKey start_key = EloqKey::Raw("g:");
+    EloqKey end_key = EloqKey::Raw("g;");
+
+    TxKey start_tx_key(&start_key);
+    TxKey end_tx_key(&end_key);
+
+    txservice::BucketScanSavePoint save_point;
+    ScanOpenTxRequest scan_open(
+        &table_name,
+        schema_version,
+        ScanIndexType::Primary,
+        &start_tx_key,
+        true,
+        &end_tx_key,
+        false,
+        ScanDirection::Forward,
+        false,
+        false,
+        false,
+        false,
+        true,
+        false,
+        true,
+        false,
+        nullptr,
+        nullptr,
+        txm,
+        -1,
+        "",
+        &save_point);
+
+    txm->Execute(&scan_open);
+    scan_open.Wait();
+    if (scan_open.IsError() || scan_open.Result() == UINT64_MAX)
+    {
+        txservice::AbortTx(txm);
+        return {};
+    }
+
+    uint64_t scan_alias = scan_open.Result();
+    size_t current_index = 0;
+    size_t plan_size = save_point.PlanSize();
+
+    if (current_index < plan_size)
+    {
+        txservice::BucketScanPlan plan = save_point.PickPlan(current_index);
+        std::vector<txservice::ScanBatchTuple> scan_batch;
+        ScanBatchTxRequest scan_batch_req(
+            scan_alias,
+            table_name,
+            &scan_batch,
+            nullptr,
+            nullptr,
+            txm,
+            -1,
+            "",
+            &plan);
+        txm->Execute(&scan_batch_req);
+        scan_batch_req.Wait();
+
+        if (!scan_batch_req.IsError())
+        {
+            for (const auto &tuple : scan_batch)
+            {
+                if (tuple.status_ == txservice::RecordStatus::Normal)
+                {
+                    gc_records.push_back(tuple.key_.ToString());
+                }
+            }
+        }
+    }
+
+    txservice::AbortTx(txm);
+    return gc_records;
+}
+
+bool RedisServiceImpl::CleanPrefixKeys(const std::string& old_prefix)
+{
+    std::string old_prefix_next = NamespacePrefix::MakePrefixNext(old_prefix);
+    const TableName &table_name = *ns_data_table_name_;
+
+    while (true)
+    {
+        if (stopping_indicator_.load(std::memory_order_relaxed))
+        {
+            return false;
+        }
+
+        TransactionExecution *txm = NewTxm(IsolationLevel::ReadCommitted, CcProtocol::OccRead);
+        if (txm == nullptr)
+        {
+            bthread_usleep(100 * 1000);
+            continue;
+        }
 
         CatalogKey catalog_key(table_name);
         TxKey cat_tx_key(&catalog_key);
@@ -2695,23 +2900,19 @@ bool RedisServiceImpl::ExecuteFlushDBCommand(
         read_req.Wait();
         if (read_req.IsError())
         {
-            if (auto_commit) AbortTx(txm);
-            output->OnError(read_req.ErrorMsg());
-            return false;
+            txservice::AbortTx(txm);
+            bthread_usleep(100 * 1000);
+            continue;
         }
         uint64_t schema_version = catalog_rec.SchemaTs();
 
-        std::string old_ns_temp = std::move(current_namespace);
-        current_namespace = "";
-        EloqKey start_key(ns_prefix);
-        EloqKey end_key(ns_prefix_next);
-        current_namespace = std::move(old_ns_temp);
+        EloqKey start_key = EloqKey::Raw(old_prefix);
+        EloqKey end_key = EloqKey::Raw(old_prefix_next);
 
         TxKey start_tx_key(&start_key);
         TxKey end_tx_key(&end_key);
 
         txservice::BucketScanSavePoint save_point;
-
         ScanOpenTxRequest scan_open(
             &table_name,
             schema_version,
@@ -2736,32 +2937,24 @@ bool RedisServiceImpl::ExecuteFlushDBCommand(
             "",
             &save_point);
 
-        bool success = SendTxRequestAndWaitResult(txm, &scan_open, nullptr);
-        if (!success)
+        txm->Execute(&scan_open);
+        scan_open.Wait();
+        if (scan_open.IsError() || scan_open.Result() == UINT64_MAX)
         {
-            if (auto_commit) AbortTx(txm);
-            return false;
+            txservice::AbortTx(txm);
+            bthread_usleep(100 * 1000);
+            continue;
         }
 
         uint64_t scan_alias = scan_open.Result();
-        if (scan_alias == UINT64_MAX)
-        {
-            if (auto_commit) AbortTx(txm);
-            return false;
-        }
-
         size_t current_index = 0;
         size_t plan_size = save_point.PlanSize();
-        txservice::BucketScanPlan plan = save_point.PickPlan(current_index);
         std::vector<txservice::ScanBatchTuple> scan_batch;
 
-        std::vector<std::unique_ptr<EloqKey>> del_keys;
-        std::vector<std::unique_ptr<DelCommand>> del_cmds;
-        std::vector<std::unique_ptr<ObjectCommandTxRequest>> del_reqs;
-
-        while (current_index < plan_size)
+        std::vector<std::string> keys_to_delete;
+        if (current_index < plan_size)
         {
-            scan_batch.clear();
+            txservice::BucketScanPlan plan = save_point.PickPlan(current_index);
             ScanBatchTxRequest scan_batch_req(
                 scan_alias,
                 table_name,
@@ -2772,84 +2965,154 @@ bool RedisServiceImpl::ExecuteFlushDBCommand(
                 -1,
                 "",
                 &plan);
-
-            success = SendTxRequestAndWaitResult(txm, &scan_batch_req, nullptr);
-            if (!success) break;
+            txm->Execute(&scan_batch_req);
+            scan_batch_req.Wait();
+            if (scan_batch_req.IsError())
+            {
+                txservice::AbortTx(txm);
+                return false;
+            }
 
             for (const auto &tuple : scan_batch)
             {
-                if (tuple.status_ != txservice::RecordStatus::Normal)
+                if (tuple.status_ == txservice::RecordStatus::Normal)
                 {
-                    continue;
-                }
-                std::string full_key = tuple.key_.ToString();
-
-                std::string old_ns_del = std::move(current_namespace);
-                current_namespace = "";
-                auto key_obj = std::make_unique<EloqKey>(full_key);
-                current_namespace = std::move(old_ns_del);
-
-                auto del_cmd = std::make_unique<DelCommand>();
-                auto del_req = std::make_unique<ObjectCommandTxRequest>(
-                    &table_name, key_obj.get(), del_cmd.get(),
-                    /*auto_commit=*/false, /*always_redirect=*/true, txm);
-
-                success = SendTxRequestAndWaitResult(txm, del_req.get(), nullptr);
-                if (!success)
-                {
-                    if (auto_commit) AbortTx(txm);
-                    return false;
-                }
-
-                del_keys.push_back(std::move(key_obj));
-                del_cmds.push_back(std::move(del_cmd));
-                del_reqs.push_back(std::move(del_req));
-            }
-
-            if (scan_batch_req.Result())
-            {
-                current_index++;
-                if (current_index < plan_size)
-                {
-                    plan = save_point.PickPlan(current_index);
+                    keys_to_delete.push_back(tuple.key_.ToString());
                 }
             }
         }
 
-        // Scheme 1: Transactional metadata counter
-        old_ns_temp = std::move(current_namespace);
-        current_namespace = "";
-        EloqKey counter_key("k:" + ns_prefix.substr(0, ns_prefix.size() - 1));
-        current_namespace = std::move(old_ns_temp);
+        txservice::AbortTx(txm);
 
-        SetCommand set_counter_cmd("0");
-        ObjectCommandTxRequest set_counter_req(namespace_table_name_.get(), &counter_key, &set_counter_cmd, /*auto_commit=*/false, /*always_redirect=*/true, txm);
-        success = SendTxRequestAndWaitResult(txm, &set_counter_req, nullptr);
+        if (keys_to_delete.empty())
+        {
+            return true;
+        }
+
+        TransactionExecution *txm_del = NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
+        if (txm_del == nullptr)
+        {
+            bthread_usleep(100 * 1000);
+            continue;
+        }
+
+        std::vector<std::unique_ptr<EloqKey>> del_keys;
+        std::vector<std::unique_ptr<DelCommand>> del_cmds;
+        std::vector<std::unique_ptr<ObjectCommandTxRequest>> del_reqs;
+        del_keys.reserve(keys_to_delete.size());
+        del_cmds.reserve(keys_to_delete.size());
+        del_reqs.reserve(keys_to_delete.size());
+
+        bool delete_success = true;
+        for (const auto &k : keys_to_delete)
+        {
+            auto key_obj = std::make_unique<EloqKey>(EloqKey::Raw(k));
+            auto del_cmd = std::make_unique<DelCommand>();
+            auto del_req = std::make_unique<ObjectCommandTxRequest>(
+                &table_name, key_obj.get(), del_cmd.get(),
+                /*auto_commit=*/false, /*always_redirect=*/true, txm_del);
+
+            txm_del->Execute(del_req.get());
+            del_req->Wait();
+            if (del_req->IsError())
+            {
+                delete_success = false;
+                break;
+            }
+
+            del_keys.push_back(std::move(key_obj));
+            del_cmds.push_back(std::move(del_cmd));
+            del_reqs.push_back(std::move(del_req));
+        }
+
+        if (delete_success)
+        {
+            auto [commit_success, commit_err] = txservice::CommitTx(txm_del);
+            if (!commit_success)
+            {
+                delete_success = false;
+            }
+        }
+        else
+        {
+            txservice::AbortTx(txm_del);
+        }
+
+        bthread_usleep(delete_success ? 5000 : 50000);
+    }
+}
+
+void RedisServiceImpl::DeleteGCRecord(const std::string& gc_key)
+{
+    TransactionExecution *txm = NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
+    if (txm == nullptr) return;
+
+    EloqKey key_obj = EloqKey::Raw(gc_key);
+    DelCommand del_cmd;
+    ObjectCommandTxRequest del_req(namespace_table_name_.get(), &key_obj, &del_cmd, /*auto_commit=*/false, /*always_redirect=*/true, txm);
+
+    txm->Execute(&del_req);
+    del_req.Wait();
+    if (!del_req.IsError())
+    {
+        txservice::CommitTx(txm);
+    }
+    else
+    {
+        txservice::AbortTx(txm);
+    }
+}
+
+bool RedisServiceImpl::ExecuteFlushDBCommand(
+    RedisConnectionContext *ctx,
+    txservice::TransactionExecution *txm,
+    EloqKV::OutputHandler *output,
+    bool auto_commit)
+{
+    if (ctx && ctx->ns != "default" && !ctx->ns.empty() && ctx->ns_meta)
+    {
+        uint64_t old_epoch = ctx->ns_meta->epoch.load(std::memory_order_relaxed);
+        uint64_t new_epoch = old_epoch + 1;
+
+        EloqKey e_key = EloqKey::Raw("e:" + ctx->ns_meta->encoded_id);
+        std::string new_epoch_str = std::to_string(new_epoch);
+        SetCommand set_e_cmd(new_epoch_str);
+        ObjectCommandTxRequest set_e_req(namespace_table_name_.get(), &e_key, &set_e_cmd, /*auto_commit=*/false, /*always_redirect=*/true, txm);
+        bool success = SendTxRequestAndWaitResult(txm, &set_e_req, nullptr);
         if (!success)
         {
             if (auto_commit) AbortTx(txm);
+            output->OnError("Failed to update namespace epoch in DB");
+            return false;
+        }
+
+        // Write GC record atomically in the same transaction
+        EloqKey gc_key = EloqKey::Raw("g:" + ctx->ns_meta->encoded_id + ":" + std::to_string(old_epoch));
+        SetCommand set_gc_cmd("1");
+        ObjectCommandTxRequest set_gc_req(namespace_table_name_.get(), &gc_key, &set_gc_cmd, /*auto_commit=*/false, /*always_redirect=*/true, txm);
+        success = SendTxRequestAndWaitResult(txm, &set_gc_req, nullptr);
+        if (!success)
+        {
+            if (auto_commit) AbortTx(txm);
+            output->OnError("Failed to register namespace GC record in DB");
             return false;
         }
 
         if (auto_commit)
         {
             auto [commit_success, commit_err] = txservice::CommitTx(txm);
-            if (commit_success)
-            {
-                output->OnStatus("OK");
-                return true;
-            }
-            else
+            if (!commit_success)
             {
                 output->OnError("Commit failed");
                 return false;
             }
         }
-        else
-        {
-            output->OnStatus("OK");
-            return true;
-        }
+
+        // Update in-memory metadata epoch
+        ctx->ns_meta->epoch.store(new_epoch, std::memory_order_release);
+
+        output->OnStatus("OK");
+        return true;
     }
 
     const TableName *redis_table_name = RedisTableName(ctx->db_id);
@@ -5900,29 +6163,44 @@ size_t RedisServiceImpl::GetRedisTableCount() const
 }
 
 bool RedisServiceImpl::AuthRequired(const RedisConnectionContext *ctx,
-                                    const butil::StringPiece &command) const
+                                    const std::vector<butil::StringPiece> &args) const
 {
+    if (args.empty())
+    {
+        return true;
+    }
     if (requirepass.empty())
     {
         return false;
     }
-    else
+
+    if (ctx->authenticated)
     {
-        if (ctx->authenticated)
+        return false;
+    }
+
+    // Bypass auth for "NAMESPACE CURRENT"
+    if (args.size() >= 2)
+    {
+        std::string first(args[0].data(), args[0].size());
+        std::string second(args[1].data(), args[1].size());
+        std::transform(first.begin(), first.end(), first.begin(), ::tolower);
+        std::transform(second.begin(), second.end(), second.begin(), ::tolower);
+        if (first == "namespace" && second == "current")
         {
             return false;
         }
-        else
-        {
-            constexpr std::array<std::string_view, 4> cmds_no_auth = {
-                "auth", "hello", "quit", "reset"};
-            return std::find(
-                       cmds_no_auth.begin(),
-                       cmds_no_auth.end(),
-                       std::string_view(command.data(), command.size())) ==
-                   cmds_no_auth.end();
-        }
     }
+
+    constexpr std::array<std::string_view, 4> cmds_no_auth = {
+        "auth", "hello", "quit", "reset"};
+    std::string cmd_name(args[0].data(), args[0].size());
+    std::transform(cmd_name.begin(), cmd_name.end(), cmd_name.begin(), ::tolower);
+    return std::find(
+               cmds_no_auth.begin(),
+               cmds_no_auth.end(),
+               cmd_name) ==
+           cmds_no_auth.end();
 }
 
 std::unique_ptr<brpc::ConnectionContext> RedisServiceImpl::NewConnectionContext(
@@ -5945,9 +6223,18 @@ brpc::RedisCommandHandlerResult RedisServiceImpl::DispatchCommand(
     RedisConnectionContext *ctx =
         static_cast<RedisConnectionContext *>(conn_ctx);
 
+    if (ctx->ns_meta)
+    {
+        uint64_t epoch = ctx->ns_meta->epoch.load(std::memory_order_relaxed);
+        ctx->ns_id = NamespacePrefix::MakePrefixV1(ctx->ns_meta->encoded_id, epoch);
+    }
+    else if (ctx->ns == "default")
+    {
+        ctx->ns_id = "";
+    }
     NamespaceGuard ns_guard(ctx->ns_id);
 
-    if (AuthRequired(ctx, args[0]))
+    if (AuthRequired(ctx, args))
     {
         output->SetError("NOAUTH Authentication required.");
         return result;
@@ -6465,10 +6752,10 @@ size_t RedisServiceImpl::MaxConnectionCount() const
 }
 
 
-std::string RedisServiceImpl::GetNamespaceTokenFromDB(std::string_view ns)
+NamespaceToken RedisServiceImpl::GetNamespaceTokenFromDB(std::string_view ns)
 {
     TransactionExecution *txm = NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
-    if (txm == nullptr) return "";
+    if (txm == nullptr) return NamespaceToken();
 
     EloqKey db_key = EloqKey::Raw("n:" + std::string(ns));
 
@@ -6479,22 +6766,29 @@ std::string RedisServiceImpl::GetNamespaceTokenFromDB(std::string_view ns)
     if (!success)
     {
         txservice::AbortTx(txm);
-        return "";
+        return NamespaceToken();
     }
     auto [commit_success, _] = txservice::CommitTx(txm);
-    return (commit_success && cmd.result_.err_code_ == RD_OK)
-               ? cmd.result_.str_
-               : "";
+    if (commit_success && cmd.result_.err_code_ == RD_OK)
+    {
+        return NamespaceToken(cmd.result_.str_);
+    }
+    return NamespaceToken();
 }
 
-std::string RedisServiceImpl::GetNamespaceFromTokenFromDB(std::string_view token, std::string &ns_id)
+std::string RedisServiceImpl::GetNamespaceFromTokenFromDB(const NamespaceToken &token, std::string &ns_id, uint64_t &epoch)
 {
     ns_id = "";
+    epoch = 1;
 
-    if (token == requirepass && !requirepass.empty())
+    if (!token.valid)
     {
-        ns_id = "";
-        return "default";
+        return "";
+    }
+
+    if (token.ToString() == requirepass && !requirepass.empty())
+    {
+        return "";
     }
 
     TransactionExecution *txm = NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
@@ -6504,7 +6798,11 @@ std::string RedisServiceImpl::GetNamespaceFromTokenFromDB(std::string_view token
     std::unique_ptr<GetCommand> cmd_i;
     std::unique_ptr<ObjectCommandTxRequest> tx_req_i;
 
-    EloqKey db_key = EloqKey::Raw("t:" + std::string(token));
+    std::unique_ptr<EloqKey> e_key;
+    std::unique_ptr<GetCommand> cmd_e;
+    std::unique_ptr<ObjectCommandTxRequest> tx_req_e;
+
+    EloqKey db_key = EloqKey::Raw("t:" + std::string(token.RawView()));
 
     GetCommand cmd;
     ObjectCommandTxRequest tx_req(namespace_table_name_.get(), &db_key, &cmd, /*auto_commit=*/false, /*always_redirect=*/true, txm);
@@ -6514,7 +6812,7 @@ std::string RedisServiceImpl::GetNamespaceFromTokenFromDB(std::string_view token
     if (success && cmd.result_.err_code_ == RD_OK)
     {
         std::string encoded_id = cmd.result_.str_;
-        ns_id = encoded_id + std::string{B255_DELIMITER};
+        ns_id = encoded_id;
 
         i_key = std::make_unique<EloqKey>(EloqKey::Raw("i:" + encoded_id));
 
@@ -6525,20 +6823,44 @@ std::string RedisServiceImpl::GetNamespaceFromTokenFromDB(std::string_view token
         {
             ns_name = cmd_i->result_.str_;
         }
+
+        e_key = std::make_unique<EloqKey>(EloqKey::Raw("e:" + encoded_id));
+        cmd_e = std::make_unique<GetCommand>();
+        tx_req_e = std::make_unique<ObjectCommandTxRequest>(namespace_table_name_.get(), e_key.get(), cmd_e.get(), /*auto_commit=*/false, /*always_redirect=*/true, txm);
+        success = SendTxRequestAndWaitResult(txm, tx_req_e.get(), nullptr);
+        if (success && cmd_e->result_.err_code_ == RD_OK)
+        {
+            try
+            {
+                epoch = std::stoull(cmd_e->result_.str_);
+            }
+            catch (...)
+            {
+                epoch = 1;
+            }
+        }
     }
 
     txservice::CommitTx(txm);
     return ns_name;
 }
 
-bool RedisServiceImpl::AddNamespaceToDB(std::string_view ns, std::string_view token)
+bool RedisServiceImpl::AddNamespaceToDB(std::string_view ns, const NamespaceToken &token)
 {
+    if (!token.valid)
+    {
+        return false;
+    }
+    if (token.ToString() == requirepass && !requirepass.empty())
+    {
+        return false;
+    }
     TransactionExecution *txm = NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
     if (txm == nullptr) return false;
 
     // Check if ns already exists
     EloqKey check_ns_key = EloqKey::Raw("n:" + std::string(ns));
-    EloqKey check_token_key = EloqKey::Raw("t:" + std::string(token));
+    EloqKey check_token_key = EloqKey::Raw("t:" + std::string(token.RawView()));
 
     GetCommand cmd_ns;
     ObjectCommandTxRequest tx_req_ns(namespace_table_name_.get(), &check_ns_key, &cmd_ns, /*auto_commit=*/false, /*always_redirect=*/true, txm);
@@ -6551,7 +6873,7 @@ bool RedisServiceImpl::AddNamespaceToDB(std::string_view ns, std::string_view to
     if (cmd_ns.result_.err_code_ == RD_OK)
     {
         txservice::CommitTx(txm);
-        return cmd_ns.result_.str_ == token; // Already exists with same token
+        return cmd_ns.result_.str_ == token.RawView(); // Already exists with same token
     }
 
     // Check if token already exists
@@ -6608,7 +6930,8 @@ bool RedisServiceImpl::AddNamespaceToDB(std::string_view ns, std::string_view to
     }
 
     // Write n:<ns> = token
-    SetCommand cmd_set_ns(token);
+    std::string token_raw(token.RawView());
+    SetCommand cmd_set_ns(token_raw);
     ObjectCommandTxRequest tx_req_set_ns(namespace_table_name_.get(), &check_ns_key, &cmd_set_ns, /*auto_commit=*/false, /*always_redirect=*/true, txm);
     success = SendTxRequestAndWaitResult(txm, &tx_req_set_ns, nullptr);
     if (!success)
@@ -6639,12 +6962,32 @@ bool RedisServiceImpl::AddNamespaceToDB(std::string_view ns, std::string_view to
         return false;
     }
 
+    // Write e:<encoded_id> = "1"
+    EloqKey e_key = EloqKey::Raw("e:" + encoded_id);
+
+    SetCommand cmd_set_e("1");
+    ObjectCommandTxRequest tx_req_set_e(namespace_table_name_.get(), &e_key, &cmd_set_e, /*auto_commit=*/false, /*always_redirect=*/true, txm);
+    success = SendTxRequestAndWaitResult(txm, &tx_req_set_e, nullptr);
+    if (!success)
+    {
+        txservice::AbortTx(txm);
+        return false;
+    }
+
     auto [commit_success, commit_err] = txservice::CommitTx(txm);
     return commit_success;
 }
 
-bool RedisServiceImpl::SetNamespaceInDB(std::string_view ns, std::string_view token)
+bool RedisServiceImpl::SetNamespaceInDB(std::string_view ns, const NamespaceToken &token)
 {
+    if (!token.valid)
+    {
+        return false;
+    }
+    if (token.ToString() == requirepass && !requirepass.empty())
+    {
+        return false;
+    }
     TransactionExecution *txm = NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
     if (txm == nullptr) return false;
 
@@ -6652,6 +6995,7 @@ bool RedisServiceImpl::SetNamespaceInDB(std::string_view ns, std::string_view to
     std::unique_ptr<GetCommand> cmd_owner;
     std::unique_ptr<ObjectCommandTxRequest> tx_req_owner;
 
+    std::unique_ptr<EloqKey> old_token_key;
     std::unique_ptr<DelCommand> cmd_del_old;
     std::unique_ptr<ObjectCommandTxRequest> tx_req_del_old;
 
@@ -6659,8 +7003,10 @@ bool RedisServiceImpl::SetNamespaceInDB(std::string_view ns, std::string_view to
     std::unique_ptr<SetCommand> cmd_set_id;
     std::unique_ptr<ObjectCommandTxRequest> tx_req_set_id;
 
+    std::string token_raw;
+
     // Check if token already exists and is occupied by another namespace
-    EloqKey check_token_key = EloqKey::Raw("t:" + std::string(token));
+    EloqKey check_token_key = EloqKey::Raw("t:" + std::string(token.RawView()));
 
     GetCommand cmd_token;
     ObjectCommandTxRequest tx_req_token(namespace_table_name_.get(), &check_token_key, &cmd_token, /*auto_commit=*/false, /*always_redirect=*/true, txm);
@@ -6709,16 +7055,16 @@ bool RedisServiceImpl::SetNamespaceInDB(std::string_view ns, std::string_view to
     if (cmd_ns.result_.err_code_ == RD_OK)
     {
         std::string old_token = cmd_ns.result_.str_;
-        if (old_token == token)
+        if (old_token == token.RawView())
         {
             txservice::CommitTx(txm);
             return true;
         }
 
-        EloqKey old_token_key = EloqKey::Raw("t:" + old_token);
+        old_token_key = std::make_unique<EloqKey>(EloqKey::Raw("t:" + old_token));
 
         GetCommand cmd_old_t;
-        ObjectCommandTxRequest tx_req_old_t(namespace_table_name_.get(), &old_token_key, &cmd_old_t, /*auto_commit=*/false, /*always_redirect=*/true, txm);
+        ObjectCommandTxRequest tx_req_old_t(namespace_table_name_.get(), old_token_key.get(), &cmd_old_t, /*auto_commit=*/false, /*always_redirect=*/true, txm);
         success = SendTxRequestAndWaitResult(txm, &tx_req_old_t, nullptr);
         if (success && cmd_old_t.result_.err_code_ == RD_OK)
         {
@@ -6726,7 +7072,7 @@ bool RedisServiceImpl::SetNamespaceInDB(std::string_view ns, std::string_view to
         }
 
         cmd_del_old = std::make_unique<DelCommand>();
-        tx_req_del_old = std::make_unique<ObjectCommandTxRequest>(namespace_table_name_.get(), &old_token_key, cmd_del_old.get(), /*auto_commit=*/false, /*always_redirect=*/true, txm);
+        tx_req_del_old = std::make_unique<ObjectCommandTxRequest>(namespace_table_name_.get(), old_token_key.get(), cmd_del_old.get(), /*auto_commit=*/false, /*always_redirect=*/true, txm);
         success = SendTxRequestAndWaitResult(txm, tx_req_del_old.get(), nullptr);
         if (!success)
         {
@@ -6737,6 +7083,11 @@ bool RedisServiceImpl::SetNamespaceInDB(std::string_view ns, std::string_view to
 
     if (encoded_id.empty())
     {
+        if (cmd_ns.result_.err_code_ == RD_OK)
+        {
+            txservice::AbortTx(txm);
+            return false;
+        }
         next_id_key = std::make_unique<EloqKey>(EloqKey::Raw(std::string_view("next_id")));
 
         GetCommand cmd_id;
@@ -6775,7 +7126,8 @@ bool RedisServiceImpl::SetNamespaceInDB(std::string_view ns, std::string_view to
         }
     }
 
-    SetCommand cmd_set_ns(token);
+    token_raw = std::string(token.RawView());
+    SetCommand cmd_set_ns(token_raw);
     ObjectCommandTxRequest tx_req_set_ns(namespace_table_name_.get(), &check_ns_key, &cmd_set_ns, /*auto_commit=*/false, /*always_redirect=*/true, txm);
     success = SendTxRequestAndWaitResult(txm, &tx_req_set_ns, nullptr);
     if (!success)
@@ -6813,193 +7165,95 @@ bool RedisServiceImpl::DelNamespaceFromDB(std::string_view ns)
     TransactionExecution *txm = NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
     if (txm == nullptr) return false;
 
+    // Define all keys, commands, and request objects at function scope using unique_ptr to prevent stack lifetime bugs
+    std::unique_ptr<EloqKey> check_ns_key = std::make_unique<EloqKey>(EloqKey::Raw("n:" + std::string(ns)));
+    std::unique_ptr<EloqKey> check_token_key;
+    std::unique_ptr<EloqKey> gc_key;
     std::unique_ptr<EloqKey> i_key;
-    std::unique_ptr<DelCommand> cmd_del_i;
-    std::unique_ptr<ObjectCommandTxRequest> tx_req_del_i;
+    std::unique_ptr<EloqKey> e_key;
+    std::unique_ptr<EloqKey> e_get_key;
 
-    std::vector<std::unique_ptr<EloqKey>> del_keys;
-    std::vector<std::unique_ptr<DelCommand>> del_cmds;
-    std::vector<std::unique_ptr<ObjectCommandTxRequest>> del_reqs;
+    std::unique_ptr<GetCommand> cmd_ns = std::make_unique<GetCommand>();
+    std::unique_ptr<ObjectCommandTxRequest> tx_req_ns = std::make_unique<ObjectCommandTxRequest>(
+        namespace_table_name_.get(), check_ns_key.get(), cmd_ns.get(), /*auto_commit=*/false, /*always_redirect=*/true, txm);
 
-    EloqKey check_ns_key = EloqKey::Raw("n:" + std::string(ns));
-
-    GetCommand cmd_ns;
-    ObjectCommandTxRequest tx_req_ns(namespace_table_name_.get(), &check_ns_key, &cmd_ns, /*auto_commit=*/false, /*always_redirect=*/true, txm);
-    bool success = SendTxRequestAndWaitResult(txm, &tx_req_ns, nullptr);
-    if (!success || cmd_ns.result_.err_code_ != RD_OK)
+    bool success = SendTxRequestAndWaitResult(txm, tx_req_ns.get(), nullptr);
+    if (!success || cmd_ns->result_.err_code_ != RD_OK)
     {
         txservice::AbortTx(txm);
         return false;
     }
 
-    std::string token = cmd_ns.result_.str_;
+    std::string token = cmd_ns->result_.str_;
     std::string encoded_id;
 
-    EloqKey check_token_key = EloqKey::Raw("t:" + token);
+    check_token_key = std::make_unique<EloqKey>(EloqKey::Raw("t:" + token));
 
-    GetCommand cmd_t;
-    ObjectCommandTxRequest tx_req_t(namespace_table_name_.get(), &check_token_key, &cmd_t, /*auto_commit=*/false, /*always_redirect=*/true, txm);
-    success = SendTxRequestAndWaitResult(txm, &tx_req_t, nullptr);
-    if (success && cmd_t.result_.err_code_ == RD_OK)
+    std::unique_ptr<GetCommand> cmd_t = std::make_unique<GetCommand>();
+    std::unique_ptr<ObjectCommandTxRequest> tx_req_t = std::make_unique<ObjectCommandTxRequest>(
+        namespace_table_name_.get(), check_token_key.get(), cmd_t.get(), /*auto_commit=*/false, /*always_redirect=*/true, txm);
+    success = SendTxRequestAndWaitResult(txm, tx_req_t.get(), nullptr);
+    if (success && cmd_t->result_.err_code_ == RD_OK)
     {
-        encoded_id = cmd_t.result_.str_;
+        encoded_id = cmd_t->result_.str_;
     }
 
-    // Cascade delete all keys in the namespace across all tables
+    uint64_t epoch = 1;
+    std::unique_ptr<GetCommand> cmd_e;
+    std::unique_ptr<ObjectCommandTxRequest> tx_req_e;
+    std::unique_ptr<SetCommand> set_gc_cmd;
+    std::unique_ptr<ObjectCommandTxRequest> set_gc_req;
+    std::unique_ptr<DelCommand> cmd_del_i;
+    std::unique_ptr<ObjectCommandTxRequest> tx_req_del_i;
+    std::unique_ptr<DelCommand> cmd_del_e;
+    std::unique_ptr<ObjectCommandTxRequest> tx_req_del_e;
+
     if (!encoded_id.empty())
     {
-        std::string ns_prefix = encoded_id + std::string{B255_DELIMITER};
-        std::string ns_prefix_next = ComposeNamespaceKeyNext(ns_prefix);
-
-        const TableName &table_name = *ns_data_table_name_;
+        e_get_key = std::make_unique<EloqKey>(EloqKey::Raw("e:" + encoded_id));
+        cmd_e = std::make_unique<GetCommand>();
+        tx_req_e = std::make_unique<ObjectCommandTxRequest>(
+            namespace_table_name_.get(), e_get_key.get(), cmd_e.get(), /*auto_commit=*/false, /*always_redirect=*/true, txm);
+        success = SendTxRequestAndWaitResult(txm, tx_req_e.get(), nullptr);
+        if (success && cmd_e->result_.err_code_ == RD_OK)
         {
-            // 1. Fetch catalog and acquire read lock on catalog table
-            CatalogKey catalog_key(table_name);
-            TxKey cat_tx_key(&catalog_key);
-            CatalogRecord catalog_rec;
-            ReadTxRequest read_req(&txservice::catalog_ccm_name,
-                                   0,
-                                   &cat_tx_key,
-                                   &catalog_rec,
-                                   false,
-                                   false,
-                                   true,
-                                   0,
-                                   false,
-                                   false,
-                                   false,
-                                   nullptr,
-                                   nullptr,
-                                   txm);
-            txm->Execute(&read_req);
-            read_req.Wait();
-            if (read_req.IsError())
+            try
             {
-                txservice::AbortTx(txm);
-                return false;
+                epoch = std::stoull(cmd_e->result_.str_);
             }
-            uint64_t schema_version = catalog_rec.SchemaTs();
-
-            // 2. Open scan on this table
-            EloqKey start_key = EloqKey::Raw(ns_prefix);
-            EloqKey end_key = EloqKey::Raw(ns_prefix_next);
-
-            TxKey start_tx_key(&start_key);
-            TxKey end_tx_key(&end_key);
-
-            txservice::BucketScanSavePoint save_point;
-
-            ScanOpenTxRequest scan_open(
-                &table_name,
-                schema_version,
-                ScanIndexType::Primary,
-                &start_tx_key,
-                true,
-                &end_tx_key,
-                false,
-                ScanDirection::Forward,
-                false,
-                false,
-                false,
-                false,
-                true,
-                false,
-                true,
-                false,
-                nullptr,
-                nullptr,
-                txm,
-                -1,
-                "",
-                &save_point);
-
-            success = SendTxRequestAndWaitResult(txm, &scan_open, nullptr);
-            if (!success)
+            catch (...)
             {
-                txservice::AbortTx(txm);
-                return false;
+                epoch = 1;
             }
+        }
 
-            uint64_t scan_alias = scan_open.Result();
-            if (scan_alias == UINT64_MAX)
-            {
-                txservice::AbortTx(txm);
-                return false;
-            }
-
-            size_t current_index = 0;
-            size_t plan_size = save_point.PlanSize();
-            txservice::BucketScanPlan plan = save_point.PickPlan(current_index);
-            std::vector<txservice::ScanBatchTuple> scan_batch;
-
-            while (current_index < plan_size)
-            {
-                scan_batch.clear();
-                ScanBatchTxRequest scan_batch_req(
-                    scan_alias,
-                    table_name,
-                    &scan_batch,
-                    nullptr,
-                    nullptr,
-                    txm,
-                    -1,
-                    "",
-                    &plan);
-
-                success = SendTxRequestAndWaitResult(txm, &scan_batch_req, nullptr);
-                if (!success) break;
-
-                for (const auto &tuple : scan_batch)
-                {
-                    if (tuple.status_ != txservice::RecordStatus::Normal)
-                    {
-                        continue;
-                    }
-                    std::string full_key = tuple.key_.ToString();
-
-                    auto key_obj = std::make_unique<EloqKey>(EloqKey::Raw(full_key));
-
-                    auto del_cmd = std::make_unique<DelCommand>();
-                    auto del_req = std::make_unique<ObjectCommandTxRequest>(
-                        &table_name, key_obj.get(), del_cmd.get(),
-                        /*auto_commit=*/false, /*always_redirect=*/true, txm);
-
-                    success = SendTxRequestAndWaitResult(txm, del_req.get(), nullptr);
-                    if (!success)
-                    {
-                        txservice::AbortTx(txm);
-                        return false;
-                    }
-
-                    del_keys.push_back(std::move(key_obj));
-                    del_cmds.push_back(std::move(del_cmd));
-                    del_reqs.push_back(std::move(del_req));
-                }
-
-                if (scan_batch_req.Result())
-                {
-                    current_index++;
-                    if (current_index < plan_size)
-                    {
-                        plan = save_point.PickPlan(current_index);
-                    }
-                }
-            }
+        // Register GC record for async deletion
+        gc_key = std::make_unique<EloqKey>(EloqKey::Raw("g:" + encoded_id + ":" + std::to_string(epoch)));
+        set_gc_cmd = std::make_unique<SetCommand>("1");
+        set_gc_req = std::make_unique<ObjectCommandTxRequest>(
+            namespace_table_name_.get(), gc_key.get(), set_gc_cmd.get(), /*auto_commit=*/false, /*always_redirect=*/true, txm);
+        success = SendTxRequestAndWaitResult(txm, set_gc_req.get(), nullptr);
+        if (!success)
+        {
+            txservice::AbortTx(txm);
+            return false;
         }
     }
 
-    DelCommand cmd_del_ns;
-    ObjectCommandTxRequest tx_req_del_ns(namespace_table_name_.get(), &check_ns_key, &cmd_del_ns, /*auto_commit=*/false, /*always_redirect=*/true, txm);
-    success = SendTxRequestAndWaitResult(txm, &tx_req_del_ns, nullptr);
+    std::unique_ptr<DelCommand> cmd_del_ns = std::make_unique<DelCommand>();
+    std::unique_ptr<ObjectCommandTxRequest> tx_req_del_ns = std::make_unique<ObjectCommandTxRequest>(
+        namespace_table_name_.get(), check_ns_key.get(), cmd_del_ns.get(), /*auto_commit=*/false, /*always_redirect=*/true, txm);
+    success = SendTxRequestAndWaitResult(txm, tx_req_del_ns.get(), nullptr);
     if (!success)
     {
         txservice::AbortTx(txm);
         return false;
     }
 
-    DelCommand cmd_del_token;
-    ObjectCommandTxRequest tx_req_del_token(namespace_table_name_.get(), &check_token_key, &cmd_del_token, /*auto_commit=*/false, /*always_redirect=*/true, txm);
-    success = SendTxRequestAndWaitResult(txm, &tx_req_del_token, nullptr);
+    std::unique_ptr<DelCommand> cmd_del_token = std::make_unique<DelCommand>();
+    std::unique_ptr<ObjectCommandTxRequest> tx_req_del_token = std::make_unique<ObjectCommandTxRequest>(
+        namespace_table_name_.get(), check_token_key.get(), cmd_del_token.get(), /*auto_commit=*/false, /*always_redirect=*/true, txm);
+    success = SendTxRequestAndWaitResult(txm, tx_req_del_token.get(), nullptr);
     if (!success)
     {
         txservice::AbortTx(txm);
@@ -7009,10 +7263,21 @@ bool RedisServiceImpl::DelNamespaceFromDB(std::string_view ns)
     if (!encoded_id.empty())
     {
         i_key = std::make_unique<EloqKey>(EloqKey::Raw("i:" + encoded_id));
-
         cmd_del_i = std::make_unique<DelCommand>();
-        tx_req_del_i = std::make_unique<ObjectCommandTxRequest>(namespace_table_name_.get(), i_key.get(), cmd_del_i.get(), /*auto_commit=*/false, /*always_redirect=*/true, txm);
+        tx_req_del_i = std::make_unique<ObjectCommandTxRequest>(
+            namespace_table_name_.get(), i_key.get(), cmd_del_i.get(), /*auto_commit=*/false, /*always_redirect=*/true, txm);
         success = SendTxRequestAndWaitResult(txm, tx_req_del_i.get(), nullptr);
+        if (!success)
+        {
+            txservice::AbortTx(txm);
+            return false;
+        }
+
+        e_key = std::make_unique<EloqKey>(EloqKey::Raw("e:" + encoded_id));
+        cmd_del_e = std::make_unique<DelCommand>();
+        tx_req_del_e = std::make_unique<ObjectCommandTxRequest>(
+            namespace_table_name_.get(), e_key.get(), cmd_del_e.get(), /*auto_commit=*/false, /*always_redirect=*/true, txm);
+        success = SendTxRequestAndWaitResult(txm, tx_req_del_e.get(), nullptr);
         if (!success)
         {
             txservice::AbortTx(txm);
@@ -7024,9 +7289,9 @@ bool RedisServiceImpl::DelNamespaceFromDB(std::string_view ns)
     return commit_success;
 }
 
-std::map<std::string, std::string, std::less<>> RedisServiceImpl::ListNamespacesFromDB()
+std::map<NamespaceToken, std::string> RedisServiceImpl::ListNamespacesFromDB()
 {
-    std::map<std::string, std::string, std::less<>> result;
+    std::map<NamespaceToken, std::string> result;
     TransactionExecution *txm = NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
     if (txm == nullptr) return result;
 
@@ -7042,9 +7307,36 @@ std::map<std::string, std::string, std::less<>> RedisServiceImpl::ListNamespaces
 
     txservice::BucketScanSavePoint save_point;
 
+    const TableName &table_name = *namespace_table_name_;
+    CatalogKey catalog_key(table_name);
+    TxKey cat_tx_key(&catalog_key);
+    CatalogRecord catalog_rec;
+    ReadTxRequest read_req(&txservice::catalog_ccm_name,
+                           0,
+                           &cat_tx_key,
+                           &catalog_rec,
+                           false,
+                           false,
+                           true,
+                           0,
+                           false,
+                           false,
+                           false,
+                           nullptr,
+                           nullptr,
+                           txm);
+    txm->Execute(&read_req);
+    read_req.Wait();
+    if (read_req.IsError())
+    {
+        txservice::AbortTx(txm);
+        return result;
+    }
+    uint64_t schema_version = catalog_rec.SchemaTs();
+
     ScanOpenTxRequest scan_open(
         namespace_table_name_.get(),
-        0,
+        schema_version,
         ScanIndexType::Primary,
         &start_tx_key,
         true,
@@ -7100,7 +7392,11 @@ std::map<std::string, std::string, std::less<>> RedisServiceImpl::ListNamespaces
             &plan);
 
         success = SendTxRequestAndWaitResult(txm, &scan_batch_req, nullptr);
-        if (!success) break;
+        if (!success)
+        {
+            txservice::AbortTx(txm);
+            return {};
+        }
 
         for (const auto &tuple : scan_batch)
         {
@@ -7121,7 +7417,7 @@ std::map<std::string, std::string, std::less<>> RedisServiceImpl::ListNamespaces
 
                 if (SendTxRequestAndWaitResult(txm, get_req.get(), nullptr) && get_cmd->result_.err_code_ == RD_OK)
                 {
-                    std::string token = get_cmd->result_.str_;
+                    NamespaceToken token(get_cmd->result_.str_);
                     result[token] = ns_name;
                 }
 
