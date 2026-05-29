@@ -1526,8 +1526,7 @@ void AuthCommand::OutputResult(OutputHandler *reply) const
         assert(result_.err_code_ == RD_ERR_WRONG_PASS);
         reply->OnError(redis_get_error_messages(RD_ERR_WRONG_PASS));
     }
-
-
+}
 
 void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
                                RedisConnectionContext *ctx)
