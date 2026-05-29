@@ -36,11 +36,10 @@ uint16_t CRC16_XMODEM(const char *ptr, int32_t len);
 
 std::string& GetCurrentNamespace();
 #define current_namespace GetCurrentNamespace()
-extern bool enable_namespace;
 
 inline std::string ComposeNamespaceKey(std::string_view ns, std::string_view key)
 {
-    if (!enable_namespace || ns.empty() || ns == "default")
+    if (ns.empty() || ns == "default")
     {
         return std::string(key);
     }
@@ -53,7 +52,7 @@ inline std::string ComposeNamespaceKey(std::string_view ns, std::string_view key
 
 inline std::string ComposeNamespaceKeyNext(std::string_view ns)
 {
-    if (!enable_namespace || ns.empty() || ns == "default")
+    if (ns.empty() || ns == "default")
     {
         return "";
     }
@@ -78,10 +77,6 @@ inline std::string ApplyNamespace(std::string_view key)
 
 inline EloqString CreateEloqStringFromNamespace(std::string_view key)
 {
-    if (!enable_namespace)
-    {
-        return EloqString(key);
-    }
     std::string ns_key = ApplyNamespace(key);
     return EloqString(ns_key.data(), ns_key.size());
 }

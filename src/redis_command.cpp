@@ -56,7 +56,7 @@
 #include "eloq_string.h"
 #include "eloqkv_catalog_factory.h"
 #include "eloqkv_key.h"
-#include "namespace_codec.h"
+#include "b255_encode.h"
 #include "local_cc_shards.h"
 #include "output_handler.h"
 #include "redis/server.h"
@@ -1504,14 +1504,7 @@ void AuthCommand::Execute(RedisServiceImpl *redis_impl,
         result_.err_code_ = RD_OK;
         ctx->authenticated = true;
         ctx->ns = "default";
-        if (enable_namespace)
-        {
-            ctx->ns_id = EncodeBase255(0) + std::string(1, '\x00');
-        }
-        else
-        {
-            ctx->ns_id = "";
-        }
+        ctx->ns_id = EncodeBase255(0) + std::string(1, NAMESPACE_DELIMITER);
     }
     else
     {

@@ -53,32 +53,6 @@ void TestNamespacePrefixing()
 {
     std::cout << "Running TestNamespacePrefixing..." << std::endl;
 
-    // --- CASE 1: Namespace Disabled (enable_namespace = false) ---
-    EloqKV::enable_namespace = false;
-
-    // Custom namespace has no prefixing when disabled
-    EloqKV::current_namespace = "ns1";
-    std::string disabled_custom_key = ApplyNamespace("mykey");
-    assert(disabled_custom_key == "mykey");
-
-    // Default namespace has no prefixing when disabled
-    EloqKV::current_namespace = "default";
-    std::string disabled_default_key = ApplyNamespace("mykey");
-    assert(disabled_default_key == "mykey");
-
-    // Empty namespace has no prefixing
-    EloqKV::current_namespace = "";
-    std::string disabled_empty_key = ApplyNamespace("mykey");
-    assert(disabled_empty_key == "mykey");
-
-    // ComposeNamespaceKeyNext returns empty string when disabled
-    std::string disabled_next = ComposeNamespaceKeyNext("ns1");
-    assert(disabled_next == "");
-
-
-    // --- CASE 2: Absolutely Isolated Mode (enable_namespace = true) ---
-    EloqKV::enable_namespace = true;
-
     // Default namespace key is prefixless
     EloqKV::current_namespace = "default";
     std::string isolated_default_key = ApplyNamespace("mykey");

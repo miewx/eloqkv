@@ -57,7 +57,7 @@
 #include "data_substrate.h"
 #include "eloq_metrics/include/metrics.h"
 #include "eloqkv_key.h"
-#include "namespace_codec.h"
+#include "b255_encode.h"
 #include "error_messages.h"
 #include "kv_store.h"
 #include "lua_interpreter.h"
@@ -209,8 +209,6 @@ bool RedisServiceImpl::Init(brpc::Server &brpc_server)
         LOG(ERROR) << "Error: Can't load config file.";
         return false;
     }
-
-    enable_namespace = true;
 
     // Engine registration: EloqKv
     auto &ds = DataSubstrate::Instance();
@@ -5033,7 +5031,7 @@ bool RedisServiceImpl::ExecuteCommand(RedisConnectionContext *ctx,
     bool start_inclusive = false;
     bool end_inclusive = false;
 
-    std::string ns = ctx ? (enable_namespace ? ctx->ns_id : ctx->ns) : "";
+    std::string ns = ctx ? ctx->ns_id : "";
     bool has_ns = !ns.empty();
 
     NamespaceGuard ns_guard("");
@@ -5947,7 +5945,7 @@ brpc::RedisCommandHandlerResult RedisServiceImpl::DispatchCommand(
     RedisConnectionContext *ctx =
         static_cast<RedisConnectionContext *>(conn_ctx);
 
-    NamespaceGuard ns_guard(enable_namespace ? ctx->ns_id : ctx->ns);
+    NamespaceGuard ns_guard(ctx->ns_id);
 
     if (AuthRequired(ctx, args[0]))
     {
@@ -6469,8 +6467,6 @@ size_t RedisServiceImpl::MaxConnectionCount() const
 
 std::string RedisServiceImpl::GetNamespaceTokenFromDB(std::string_view ns)
 {
-    if (!enable_namespace) return "";
-
     TransactionExecution *txm = NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
     if (txm == nullptr) return "";
 
@@ -6497,11 +6493,10 @@ std::string RedisServiceImpl::GetNamespaceTokenFromDB(std::string_view ns)
 std::string RedisServiceImpl::GetNamespaceFromTokenFromDB(std::string_view token, std::string &ns_id)
 {
     ns_id = "";
-    if (!enable_namespace) return "";
 
     if (token == requirepass && !requirepass.empty())
     {
-        ns_id = std::string(1, '\x01') + std::string(1, '\x00');
+        ns_id = std::string(1, '\x01') + std::string(1, NAMESPACE_DELIMITER);
         return "default";
     }
 
@@ -6525,7 +6520,7 @@ std::string RedisServiceImpl::GetNamespaceFromTokenFromDB(std::string_view token
     if (success && cmd.result_.err_code_ == RD_OK)
     {
         std::string encoded_id = cmd.result_.str_;
-        ns_id = encoded_id + std::string(1, '\x00');
+        ns_id = encoded_id + std::string(1, NAMESPACE_DELIMITER);
 
         old_ns = std::move(current_namespace);
         current_namespace = "";
@@ -6547,8 +6542,6 @@ std::string RedisServiceImpl::GetNamespaceFromTokenFromDB(std::string_view token
 
 bool RedisServiceImpl::AddNamespaceToDB(std::string_view ns, std::string_view token)
 {
-    if (!enable_namespace) return false;
-
     TransactionExecution *txm = NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
     if (txm == nullptr) return false;
 
@@ -6670,8 +6663,6 @@ bool RedisServiceImpl::AddNamespaceToDB(std::string_view ns, std::string_view to
 
 bool RedisServiceImpl::SetNamespaceInDB(std::string_view ns, std::string_view token)
 {
-    if (!enable_namespace) return false;
-
     TransactionExecution *txm = NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
     if (txm == nullptr) return false;
 
@@ -6855,8 +6846,6 @@ bool RedisServiceImpl::SetNamespaceInDB(std::string_view ns, std::string_view to
 
 bool RedisServiceImpl::DelNamespaceFromDB(std::string_view ns)
 {
-    if (!enable_namespace) return false;
-
     TransactionExecution *txm = NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
     if (txm == nullptr) return false;
 
@@ -6901,7 +6890,7 @@ bool RedisServiceImpl::DelNamespaceFromDB(std::string_view ns)
     // Cascade delete all keys in the namespace across all tables
     if (!encoded_id.empty())
     {
-        std::string ns_prefix = encoded_id + std::string(1, '\x00');
+        std::string ns_prefix = encoded_id + std::string(1, NAMESPACE_DELIMITER);
         std::string ns_prefix_next = ComposeNamespaceKeyNext(ns_prefix);
 
         const TableName &table_name = *ns_data_table_name_;
@@ -7089,8 +7078,6 @@ bool RedisServiceImpl::DelNamespaceFromDB(std::string_view ns)
 std::map<std::string, std::string, std::less<>> RedisServiceImpl::ListNamespacesFromDB()
 {
     std::map<std::string, std::string, std::less<>> result;
-    if (!enable_namespace) return result;
-
     TransactionExecution *txm = NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
     if (txm == nullptr) return result;
 

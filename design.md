@@ -105,10 +105,8 @@
 ### 5.1 C++ 单元测试 ([namespace_test.cpp](./tests/unit/eloq/namespace_test.cpp))
 单元测试主要验证在不同配置模式下，底层内存模型及键前缀包装的安全边界。
 - **管理器功能 (`TestNamespaceManager`)**：验证内存缓存模式下的 `Add`, `Set`, `Del`, `GetByToken`, `List` 操作，测试唯一性限制。
-- **兼容性验证 (`TestNamespacePrefixing` - CASE 1)**：
-  - 当 `enable_namespace` 为 `false` 时，验证自定义、默认和空命名空间下的 Key 操作**完全不附加任何前缀**（`ApplyNamespace` 保持原样返回原键），`ComposeNamespaceKeyNext` 返回空，保证不破坏原有的非隔离系统数据结构。
-- **隔离模式验证 (`TestNamespacePrefixing` - CASE 2)**：
-  - 当 `enable_namespace` 为 `true` 时，验证默认空间是无前缀的（prefixless），而自定义空间则使用其编码后的命名空间 ID 作为前缀（例如首个自定义空间的编码前缀为双字节 `\x02\x00`）。
+- **前缀与隔离验证 (`TestNamespacePrefixing`)**：
+  - 验证默认空间是无前缀的（prefixless），而自定义空间则使用其编码后的命名空间 ID 作为前缀（例如首个自定义空间的编码前缀为双字节 `\x02\x00`）。
   - 验证 B 树范围扫描 of 辅助边界计算（如 `ComposeNamespaceKeyNext("\x02\x00")` 返回 `\x02\x01`），确立严密的租户检索边界。
 
 ### 5.2 客户端协议集成测试 ([namespace.test.js](./js/namespace.test.js))

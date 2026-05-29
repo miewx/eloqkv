@@ -1,5 +1,5 @@
 #include "namespace_manager.h"
-#include "namespace_codec.h"
+#include "b255_encode.h"
 #include <mutex>
 #ifndef UNIT_TEST
 #include "redis_service.h"
@@ -43,11 +43,11 @@ bool NamespaceManager::Add(std::string_view ns, std::string_view token)
     uint64_t id = 2 + ns_to_id_.size();
     if (ns == "default")
     {
-        ns_to_id_.emplace(ns, std::string(1, '\x01') + std::string(1, '\x00'));
+        ns_to_id_.emplace(ns, std::string(1, '\x01') + std::string(1, NAMESPACE_DELIMITER));
     }
     else
     {
-        ns_to_id_.emplace(ns, EncodeBase255(id) + std::string(1, '\x00'));
+        ns_to_id_.emplace(ns, EncodeBase255(id) + std::string(1, NAMESPACE_DELIMITER));
     }
     return true;
 }
@@ -84,11 +84,11 @@ bool NamespaceManager::Set(std::string_view ns, std::string_view token)
     uint64_t id = 2 + ns_to_id_.size();
     if (ns == "default")
     {
-        ns_to_id_.emplace(ns, std::string(1, '\x01') + std::string(1, '\x00'));
+        ns_to_id_.emplace(ns, std::string(1, '\x01') + std::string(1, NAMESPACE_DELIMITER));
     }
     else
     {
-        ns_to_id_.emplace(ns, EncodeBase255(id) + std::string(1, '\x00'));
+        ns_to_id_.emplace(ns, EncodeBase255(id) + std::string(1, NAMESPACE_DELIMITER));
     }
     return true;
 }

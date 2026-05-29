@@ -37,6 +37,7 @@
 #include "redis_handler.h"
 #include "redis_object.h"
 #include "redis_stats.h"
+#include "b255_encode.h"
 
 namespace EloqKV
 {
@@ -70,10 +71,7 @@ public:
           pub_sub_mgr(mgr)
     {
         RedisStats::IncrConnReceived();
-        if (enable_namespace)
-        {
-            ns_id = std::string(1, '\x01') + std::string(1, '\x00');
-        }
+        ns_id = std::string(1, '\x01') + std::string(1, NAMESPACE_DELIMITER);
     }
 
     ~RedisConnectionContext() override;
