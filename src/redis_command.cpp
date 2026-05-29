@@ -1806,8 +1806,9 @@ void SelectCommand::OutputResult(OutputHandler *reply) const
     }
     else
     {
-        assert(result_.err_code_ == RD_ERR_SELECT_OUT_OF_RANGE);
-        reply->OnError(redis_get_error_messages(RD_ERR_SELECT_OUT_OF_RANGE));
+        assert(result_.err_code_ == RD_ERR_SELECT_OUT_OF_RANGE ||
+               result_.err_code_ == RD_ERR_SELECT_FORBIDDEN_IN_NS);
+        reply->OnError(redis_get_error_messages(result_.err_code_));
     }
 }
 
