@@ -21,6 +21,7 @@
  */
 #include "redis_service.h"
 #include "namespace/storage.h"
+#include "namespace/context.h"
 
 #include <nlohmann/json.hpp>
 #include <absl/types/span.h>
@@ -145,23 +146,6 @@ DEFINE_string(tls_key_file, "", "Path to TLS private key file (PEM format)");
 
 namespace EloqKV
 {
-struct NamespaceGuard
-{
-    std::string old_ns;
-    explicit NamespaceGuard(std::string_view ns) : old_ns(std::move(current_namespace))
-    {
-        current_namespace = ns;
-    }
-    ~NamespaceGuard()
-    {
-        current_namespace = std::move(old_ns);
-    }
-
-    NamespaceGuard(const NamespaceGuard&) = delete;
-    NamespaceGuard& operator=(const NamespaceGuard&) = delete;
-    NamespaceGuard(NamespaceGuard&&) = delete;
-    NamespaceGuard& operator=(NamespaceGuard&&) = delete;
-};
 
 const auto NUM_VCPU = std::thread::hardware_concurrency();
 

@@ -29,47 +29,11 @@
 #include "eloq_string.h"
 #include "redis_string_match.h"
 #include "tx_key.h"
-#include "namespace/prefix.h"
+#include "namespace/context.h"
 
 namespace EloqKV
 {
 uint16_t CRC16_XMODEM(const char *ptr, int32_t len);
-
-std::string& GetCurrentNamespace();
-#define current_namespace GetCurrentNamespace()
-
-inline std::string ComposeNamespaceKey(std::string_view ns, std::string_view key)
-{
-    if (ns.empty() || ns == "default")
-    {
-        return std::string(key);
-    }
-    std::string ns_key;
-    ns_key.reserve(ns.size() + key.size());
-    ns_key.append(ns);
-    ns_key.append(key);
-    return ns_key;
-}
-
-inline std::string ComposeNamespaceKeyNext(std::string_view ns)
-{
-    if (ns.empty() || ns == "default")
-    {
-        return "";
-    }
-    return NamespacePrefix::MakePrefixNext(ns);
-}
-
-inline std::string ApplyNamespace(std::string_view key)
-{
-    return ComposeNamespaceKey(current_namespace, key);
-}
-
-inline EloqString CreateEloqStringFromNamespace(std::string_view key)
-{
-    std::string ns_key = ApplyNamespace(key);
-    return EloqString(ns_key.data(), ns_key.size());
-}
 
 class EloqKey
 {
