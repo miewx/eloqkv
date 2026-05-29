@@ -125,6 +125,7 @@ async function run() {
     }
 
     // 8. 进入临时工作区提交代码
+    cd(tempDir);
     process.chdir(tempDir);
     await $`git add -A`;
 
@@ -142,17 +143,31 @@ async function run() {
     } else {
       console.log("正在基于代码提交更改...");
 
+      let gciPath = "/Users/z/.bin/gci";
       let useGci = false;
+      let gciCmd = "";
+
+      if (commandExists("gci")) {
+        useGci = true;
+        gciCmd = "gci";
+      } else {
+        try {
+          fs.accessSync(gciPath, fs.constants.X_OK);
+          useGci = true;
+          gciCmd = gciPath;
+        } catch (e) {}
+      }
 
       if (useGci) {
-        // unreachable
+        await $({ stdio: "inherit" })`${gciCmd}`;
       } else {
-        console.warn("警告：回退到普通 git commit。");
+        console.warn("警告：未找到自定义提交命令 gci，回退到普通 git commit。");
         await $`git commit -m "Sync cpp/h/hpp/ini changes from ${currentBranch}"`;
       }
     }
 
     // 切换回主目录以允许删除工作区
+    cd(repoRoot);
     process.chdir(repoRoot);
 
     // 9. 推送分支
@@ -174,6 +189,7 @@ async function run() {
     if (tempDir && fs.existsSync(tempDir)) {
       console.log("清理临时工作区...");
       // Change dir back to repo root to avoid busy directory
+      cd(repoRoot);
       process.chdir(repoRoot);
       try {
         await $`git worktree remove --force ${tempDir}`;
