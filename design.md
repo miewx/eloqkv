@@ -108,12 +108,12 @@
 - **兼容性验证 (`TestNamespacePrefixing` - CASE 1)**：
   - 当 `enable_namespace` 为 `false` 时，验证自定义、默认和空命名空间下的 Key 操作**完全不附加任何前缀**（`ApplyNamespace` 保持原样返回原键），`ComposeNamespaceKeyNext` 返回空，保证不破坏原有的非隔离系统数据结构。
 - **隔离模式验证 (`TestNamespacePrefixing` - CASE 2)**：
-  - 当 `enable_namespace` 为 `true` 时，验证默认空间前缀确为 `\x01\x00`，自定义空间前缀为 `\x02\x00`。
+  - 当 `enable_namespace` 为 `true` 时，验证默认空间是无前缀的（prefixless），而自定义空间则使用其编码后的命名空间 ID 作为前缀（例如首个自定义空间的编码前缀为双字节 `\x02\x00`）。
   - 验证 B 树范围扫描 of 辅助边界计算（如 `ComposeNamespaceKeyNext("\x02\x00")` 返回 `\x02\x01`），确立严密的租户检索边界。
 
 ### 5.2 客户端协议集成测试 ([namespace.test.js](./js/namespace.test.js))
 集成测试模拟真实客户端，校验 Redis 协议交互及租户命令隔离权限：
 - **子指令全覆盖**：测试全部的命名空间管理命令（`NAMESPACE CURRENT/ADD/GET/REFRESH/DEL`）。
-- **数据物理隔离**：验证两个客户端分别在 `default` 和租户命名空间下操作同名的 `shared_key`，底层分别对应 `\x01\x00shared_key` 和 `\x02\x00shared_key`，互不干扰、独立读写。
+- **数据物理隔离**：验证两个客户端分别在 `default` 和租户命名空间下操作同名的 `shared_key`，默认空间下对应的底层 Key 为无前缀的 `shared_key`，而租户空间下对应的底层 Key 带有其编码后的前缀（如 `\x02\x00shared_key`），互不干扰、独立读写。
 - **越权防御**：验证非管理员租户尝试调用 `NAMESPACE ADD` 或 `NAMESPACE GET *` 管理指令时，是否能被系统正确拒绝并返回相应权限错误信息。
-- **级联删除校验**：通过在租户空间下写入多个 Key，然后在默认空间下执行 `NAMESPACE DEL` 级联删除该空间，最后验证系统全局 `DBSIZE` 是否精确减少了写入的 Key 数量。
+- **级联删除校验**：通过在租户空间下写入多个 Key，然后在默认空间下执行 `NAMESPACE DEL` 级联删除该空间，最后验证系统全局 `DBSIZE` 是否精确减少了写入 of 租户 Key 数量。
