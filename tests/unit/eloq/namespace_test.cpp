@@ -17,19 +17,17 @@ void TestNamespacePrefixing()
     std::string isolated_default_next = ComposeNamespaceKeyNext("default");
     assert(isolated_default_next == "");
 
-    // Custom namespace with prefix: MAGIC + VERSION_1 + encoded_ns_id + \x00 + encoded_epoch + \x00
-    // e.g. ID = 1 (\x02), Epoch = 1 (\x02) => "\xFF\x01\x02\x00\x02\x00"
-    std::string ns_id_v1 = std::string(1, NamespacePrefix::MAGIC) + NamespacePrefix::VERSION_1 + std::string("\x02\x00\x02\x00", 4);
+    // Custom namespace with prefix: encoded_ns_id + \x00 + encoded_epoch + \x00
+    // e.g. ID = 1 (\x02), Epoch = 1 (\x02) => "\x02\x00\x02\x00"
+    std::string ns_id_v1 = std::string("\x02\x00\x02\x00", 4);
     EloqKV::current_namespace = ns_id_v1;
     std::string isolated_custom_key = ApplyNamespace("mykey");
     assert(isolated_custom_key.size() == ns_id_v1.size() + 5);
-    assert(isolated_custom_key[0] == NamespacePrefix::MAGIC);
-    assert(isolated_custom_key[1] == NamespacePrefix::VERSION_1);
+    assert(isolated_custom_key[0] == '\x02');
+    assert(isolated_custom_key[1] == '\x00');
     assert(isolated_custom_key[2] == '\x02');
     assert(isolated_custom_key[3] == '\x00');
-    assert(isolated_custom_key[4] == '\x02');
-    assert(isolated_custom_key[5] == '\x00');
-    assert(isolated_custom_key.substr(6) == "mykey");
+    assert(isolated_custom_key.substr(4) == "mykey");
 
     // Empty namespace remains un-prefixed (used for system metadata lookup)
     EloqKV::current_namespace = "";
@@ -39,24 +37,20 @@ void TestNamespacePrefixing()
     // Test isolated ComposeNamespaceKeyNext for custom namespace
     std::string isolated_custom_next = ComposeNamespaceKeyNext(ns_id_v1);
     assert(isolated_custom_next.size() == ns_id_v1.size());
-    assert(isolated_custom_next[0] == NamespacePrefix::MAGIC);
-    assert(isolated_custom_next[1] == NamespacePrefix::VERSION_1);
+    assert(isolated_custom_next[0] == '\x02');
+    assert(isolated_custom_next[1] == '\x00');
     assert(isolated_custom_next[2] == '\x02');
-    assert(isolated_custom_next[3] == '\x00');
-    assert(isolated_custom_next[4] == '\x02');
-    assert(isolated_custom_next[5] == '\x01');
+    assert(isolated_custom_next[3] == '\x01');
 
     // Test isolated ComposeNamespaceKeyNext for multi-byte encoded ID
-    std::string ns_id_multibyte = std::string(1, NamespacePrefix::MAGIC) + NamespacePrefix::VERSION_1 + std::string("\x01\x02\x00\x02\x00", 5);
+    std::string ns_id_multibyte = std::string("\x01\x02\x00\x02\x00", 5);
     std::string isolated_multibyte_next = ComposeNamespaceKeyNext(ns_id_multibyte);
     assert(isolated_multibyte_next.size() == ns_id_multibyte.size());
-    assert(isolated_multibyte_next[0] == NamespacePrefix::MAGIC);
-    assert(isolated_multibyte_next[1] == NamespacePrefix::VERSION_1);
-    assert(isolated_multibyte_next[2] == '\x01');
+    assert(isolated_multibyte_next[0] == '\x01');
+    assert(isolated_multibyte_next[1] == '\x02');
+    assert(isolated_multibyte_next[2] == '\x00');
     assert(isolated_multibyte_next[3] == '\x02');
-    assert(isolated_multibyte_next[4] == '\x00');
-    assert(isolated_multibyte_next[5] == '\x02');
-    assert(isolated_multibyte_next[6] == '\x01');
+    assert(isolated_multibyte_next[4] == '\x01');
 
     // Test all-0xFF overflow case in ComposeNamespaceKeyNext
     std::string all_ff = std::string("\xFF\xFF", 2);
