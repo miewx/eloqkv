@@ -8,7 +8,12 @@
 
 命名空间隔离机制是 EloqKV 服务端默认开启的内置功能，不需要任何显式的开关配置：
 - **默认命名空间（`default`）**：默认数据是**无前缀的（prefixless）**，数据直接路由至原有的各个物理数据库表（如 `data_table_0`, `data_table_1` 等），其行为与原生 Redis 逻辑完全一致。
-- **自定义命名空间**：所有自定义命名空间均共享单个物理表 `ns_data_table`。通过 `AUTH <token>` 认证的客户端，其数据会自动路由到 `ns_data_table` 内，采用独特的 Base-255 编码前缀实现完全隔离。这避免了为每个命名空间创建物理表的系统开销。
+- **自定义命名空间**：所有自定义命名空间均共享单个物理表 `ns_data_0`。通过 `AUTH <token>` 认证的客户端，其数据会自动路由到 `ns_data_0` 内，采用独特的 Base-255 编码前缀实现完全隔离。这避免了为每个命名空间创建物理表的系统开销。
+
+### 0.1 GetDbIndex 与物理表命名规范
+为了支持多租户逻辑并兼容原有的 `SELECT` 命令，系统实现了 `GetDbIndex()` 抽象：
+- **物理映射逻辑**：当处于自定义命名空间时，`GetDbIndex()` 返回一个特殊的逻辑索引（映射至 `ns_data_0`）；当处于默认命名空间时，返回 Redis 原生的 DB ID（映射至 `data_table_N`）。
+- **命名安全约束**：系统强制执行“数据与系统表分离”原则。所有用户数据表（Data Tables）必须以 `data_` 前缀开头，而系统管理表（System Tables）必须以 `sys_` 前缀开头（如 `sys_ns_meta`，原 `__ns_0`）。这种命名约束防止了在扫描或物理存储层面上，系统表被误识别为租户数据表。
 
 ---
 
@@ -28,8 +33,8 @@
 ### 1.2 键前缀隔离与范围扫描 (Key Prefixing & Range Scan Isolation)
 - **物理表级隔离与前缀隔离并存**：
   - **默认命名空间（`default`）**：默认情况下，默认命名空间的数据是**无前缀的（prefixless）**，保持原生的 Key 编码。其数据直接路由至原有的物理数据库表（如 `data_table_0`, `data_table_1` 等）。
-  - **自定义命名空间**：所有自定义命名空间共享单个物理表 `ns_data_table`。
-    - 各自定义命名空间在 `ns_data_table` 内使用独特的 Base-255 编码前缀实现前缀隔离。
+  - **自定义命名空间**：所有自定义命名空间共享单个物理表 `ns_data_0`。
+    - 各自定义命名空间在 `ns_data_0` 内使用独特的 Base-255 编码前缀实现前缀隔离。
     - **自定义命名空间 Key 前缀格式**：
       ```
       Key Prefix = encoded_ns_id + Delimiter (\x00) + encoded_epoch + Delimiter (\x00)
@@ -119,10 +124,10 @@ namespace NamespacePrefix
 
 ## 2. 命名空间持久化与数据字典 (Persistence & Metadata Schema)
 
-命名空间的注册与解析数据由专用的内部系统表 `__namespace` 承载，该表同样支持多版本并发控制与事务安全。
+命名空间的注册与解析数据由专用的内部系统表 `__ns_0` 承载，该表同样支持多版本并发控制与事务安全。
 
 ### 2.1 元数据键值映射
-在 `__namespace` 系统表中维护着四类核心键值对：
+在 `__ns_0` 系统表中维护着四类核心键值对：
 1. **`n:<ns_name>` -> `token`**
    - 命名空间名称到认证口令（token）的映射，用于唯一性检验及获取口令。
 2. **`t:<token>` -> `encoded_id`**
@@ -134,8 +139,8 @@ namespace NamespacePrefix
 
 ### 2.2 事务安全操作与级联删除 (Transactional Safety & Cascade Deletion)
 `RedisServiceImpl` 提供了全套的事务安全管理接口，包括添加、修改、删除和扫描列表。在删除与清理操作中实现了**级联数据清空与隔离清理**：
-- **元数据删除**：首先从 `__namespace` 系统表中删除口令、ID以及名称的双向映射记录。
-- **级联 Key 数据清空**：自定义命名空间删除时，只需针对共享的 `ns_data_table` 单个物理表进行范围扫描（边界限定在 `[ns_prefix, ns_prefix_next)` 内，即以该命名空间编码 ID 为前缀的所有租户 Key），并将扫描到的记录批量在同一个事务内全部删除，实现彻底的数据原子级级联清空。
+- **元数据删除**：首先从 `__ns_0` 系统表中删除口令、ID以及名称的双向映射记录。
+- **级联 Key 数据清空**：自定义命名空间删除时，只需针对共享的 `ns_data_0` 单个物理表进行范围扫描（边界限定在 `[ns_prefix, ns_prefix_next)` 内，即以该命名空间编码 ID 为前缀的所有租户 Key），并将扫描到的记录批量在同一个事务内全部删除，实现彻底的数据原子级级联清空。
 - **租户级独立清理 (`FLUSHDB` / `FLUSHALL`) 与异步 GC 流程**：对于自定义命名空间，`FLUSHDB` 和 `FLUSHALL` 命令被拦截为**逻辑删除**，而非同步 Truncate 物理表，从而避免阻塞主处理流程。
   - **工作流与序列图**：
     
@@ -145,7 +150,7 @@ namespace NamespacePrefix
         actor Client
         participant ConnectionContext as Connection Context (in-memory)
         participant ExecuteFlushDB as ExecuteFlushDBCommand
-        participant DB as Database (__namespace Table & ns_data_table)
+        participant DB as Database (__ns_0 Table & ns_data_0)
         participant GCDaemon as NamespaceGCDaemon (Background Thread)
 
         %% Phase 1: Logical Flush
@@ -167,7 +172,7 @@ namespace NamespacePrefix
                     loop Batch Scan and Delete
                         GCDaemon->>DB: "[Scan Tx] Scan keys with prefix"
                         DB-->>GCDaemon: "Return batch of keys"
-                        GCDaemon->>DB: "[Write Tx] Delete batch of keys in ns_data_table"
+                        GCDaemon->>DB: "[Write Tx] Delete batch of keys in ns_data_0"
                         DB-->>GCDaemon: "Commit Success"
                         Note over GCDaemon: Throttling sleep (5ms)
                     end
@@ -211,8 +216,11 @@ namespace NamespacePrefix
 
 ## 4. 辅助防崩溃设计 (Crash Prevention Design)
 
-- **`GetDbIndex` 安全防护**：
-  - 由于新引入了不带数据库索引后缀的系统表 `__namespace`，子模块 `data_substrate` 中的 `GetDbIndex` 对表名进行安全防空和非数字后缀过滤。若表名为空或不以数字结尾，直接返回 `0`，避免对字符进行越界越权减法而造成 assertion 崩溃。
+- **`GetDbIndex` 越界与崩溃安全防护**：
+  - 为了兼容子模块 `data_substrate` 中 `GetDbIndex` 对表名末尾数字后缀的断言校验（`assert(db_idx < RedisDBCnt)`），避免在执行 `ObjectCommandTxRequest` 事务命令时因表名无数字后缀或字符减法溢出导致服务崩溃，系统表在命名时采用了特定的后缀命名约定：
+    - 将独立命名空间管理表命名为 `__ns_0`；
+    - 将自定义命名空间共享数据表命名为 `ns_data_0`。
+  - 这样命名能确保 `GetDbIndex` 成功解析出后缀 `_0`（即返回 DB 索引 `0`），安全绕过限制，完美兼容子仓库逻辑，并将所有命名空间元数据和共享数据无缝归属并收敛在 Database 0 下。
 
 ---
 
