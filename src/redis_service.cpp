@@ -210,7 +210,6 @@ bool RedisServiceImpl::Init(brpc::Server &brpc_server)
         return false;
     }
 
-    use_legacy_default_ns = config_reader.GetBoolean("local", "namespace", false);
     enable_namespace = true;
 
     // Engine registration: EloqKv
