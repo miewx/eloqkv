@@ -2732,7 +2732,7 @@ void RedisServiceImpl::RunNamespaceGCDaemon()
                 continue;
             }
 
-            std::string old_prefix = NamespacePrefix::MakePrefixV1(encoded_ns_id, epoch);
+            std::string old_prefix = NamespacePrefix::MakePrefix(encoded_ns_id, epoch);
             LOG(INFO) << "Namespace GC: cleaning prefix " << old_prefix << " (record: " << gc_key << ")";
 
             bool cleanup_complete = CleanPrefixKeys(old_prefix);
@@ -6226,7 +6226,7 @@ brpc::RedisCommandHandlerResult RedisServiceImpl::DispatchCommand(
     if (ctx->ns_meta)
     {
         uint64_t epoch = ctx->ns_meta->epoch.load(std::memory_order_relaxed);
-        ctx->ns_id = NamespacePrefix::MakePrefixV1(ctx->ns_meta->encoded_id, epoch);
+        ctx->ns_id = NamespacePrefix::MakePrefix(ctx->ns_meta->encoded_id, epoch);
     }
     else if (ctx->ns == "default")
     {

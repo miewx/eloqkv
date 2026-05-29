@@ -1498,7 +1498,7 @@ void AuthCommand::Execute(RedisServiceImpl *redis_impl,
         ctx->authenticated = true;
         ctx->ns = ns_meta->ns_name;
         ctx->ns_meta = ns_meta;
-        ctx->ns_id = NamespacePrefix::MakePrefixV1(ns_meta->encoded_id, ns_meta->epoch.load(std::memory_order_relaxed));
+        ctx->ns_id = NamespacePrefix::MakePrefix(ns_meta->encoded_id, ns_meta->epoch.load(std::memory_order_relaxed));
     }
     else if (password_ == requirepass)
     {

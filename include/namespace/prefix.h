@@ -11,7 +11,7 @@ namespace NamespacePrefix
     constexpr char B255_DELIMITER = '\x00';
 
     // Construct prefix: encoded_ns_id + B255_DELIMITER + encoded_epoch + B255_DELIMITER
-    inline std::string MakePrefixV1(std::string_view encoded_ns_id, uint64_t epoch)
+    inline std::string MakePrefix(std::string_view encoded_ns_id, uint64_t epoch)
     {
         std::string prefix;
         prefix.reserve(encoded_ns_id.size() + 1 + 8 + 1);

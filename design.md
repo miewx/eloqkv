@@ -36,7 +36,7 @@
       ```
 
       ```mermaid
-      graph LR
+      graph TD
           NS_ID["encoded_ns_id (Base-255 string)"] --> DELIM1["Delimiter (1B: \\x00)"]
           DELIM1 --> EPOCH["encoded_epoch (Base-255 string)"]
           EPOCH --> DELIM2["Delimiter (1B: \\x00)"]
@@ -81,7 +81,7 @@ namespace NamespacePrefix
 {
     constexpr char B255_DELIMITER = '\x00';
 
-    inline std::string MakePrefixV1(std::string_view encoded_ns_id, uint64_t epoch)
+    inline std::string MakePrefix(std::string_view encoded_ns_id, uint64_t epoch)
     {
         std::string prefix;
         prefix.reserve(encoded_ns_id.size() + 1 + 8 + 1);
@@ -149,30 +149,30 @@ namespace NamespacePrefix
         participant GCDaemon as NamespaceGCDaemon (Background Thread)
 
         %% Phase 1: Logical Flush
-        Client->>ExecuteFlushDB: Send FLUSHDB / FLUSHALL (Custom Namespace)
+        Client->>ExecuteFlushDB: "Send FLUSHDB / FLUSHALL (Custom Namespace)"
         Note over ExecuteFlushDB: Read old_epoch from ns_meta
-        ExecuteFlushDB->>DB: [Tx 1] Set "e:<encoded_ns_id>" = new_epoch (old_epoch + 1)
-        ExecuteFlushDB->>DB: [Tx 1] Set "g:<encoded_ns_id>:<old_epoch>" = "1" (GC Record)
-        DB-->>ExecuteFlushDB: [Tx 1] Commit Success
-        ExecuteFlushDB->>ConnectionContext: Update memory epoch cache (release fence)
-        ExecuteFlushDB-->>Client: Return "OK" (Logical Delete Complete)
+        ExecuteFlushDB->>DB: "[Tx 1] Set 'e:<encoded_ns_id>' = new_epoch (old_epoch + 1)"
+        ExecuteFlushDB->>DB: "[Tx 1] Set 'g:<encoded_ns_id>:<old_epoch>' = '1' (GC Record)"
+        DB-->>ExecuteFlushDB: "[Tx 1] Commit Success"
+        ExecuteFlushDB->>ConnectionContext: "Update memory epoch cache (release fence)"
+        ExecuteFlushDB-->>Client: "Return 'OK' (Logical Delete Complete)"
 
         %% Phase 2: Asynchronous GC
         loop Regular Interval (bthread_usleep)
-            GCDaemon->>DB: [Scan Tx] Scan GC records matching "g:*" to "g;"
-            DB-->>GCDaemon: Return GC records list
+            GCDaemon->>DB: "[Scan Tx] Scan GC records matching 'g:*' range"
+            DB-->>GCDaemon: "Return GC records list"
             alt GC records not empty
                 loop For each record (g:<ns_id>:<old_epoch>)
-                    Note over GCDaemon: Resolve prefix = MakePrefixV1(ns_id, old_epoch)
+                    Note over GCDaemon: Resolve prefix = MakePrefix(ns_id, old_epoch)
                     loop Batch Scan and Delete
-                        GCDaemon->>DB: [Scan Tx] Scan keys with prefix
-                        DB-->>GCDaemon: Return batch of keys
-                        GCDaemon->>DB: [Write Tx] Delete batch of keys in ns_data_table
-                        DB-->>GCDaemon: Commit Success
+                        GCDaemon->>DB: "[Scan Tx] Scan keys with prefix"
+                        DB-->>GCDaemon: "Return batch of keys"
+                        GCDaemon->>DB: "[Write Tx] Delete batch of keys in ns_data_table"
+                        DB-->>GCDaemon: "Commit Success"
                         Note over GCDaemon: Throttling sleep (5ms)
                     end
-                    GCDaemon->>DB: [Write Tx] Delete GC record "g:<ns_id>:<old_epoch>"
-                    DB-->>GCDaemon: Commit Success
+                    GCDaemon->>DB: "[Write Tx] Delete GC record 'g:<ns_id>:<old_epoch>'"
+                    DB-->>GCDaemon: "Commit Success"
                 end
             end
         end
