@@ -4,22 +4,17 @@
 
 ---
 
-## 0. 配置文件设置与向下兼容 (Configuration & Backward Compatibility)
+## 0. 兼容性与配置设计 (Compatibility & Configuration)
 
-### 0.1 配置文件设置 (Configuration Settings)
-可通过修改配置文件（通常为 `eloqkv.ini`）来启用或禁用命名空间隔离功能。在配置文件的 `[local]` 段中进行如下配置：
+### 0.1 向下兼容与默认行为 (Default Prefixless Behavior)
+默认情况下，本版本移除了对 `namespace` 显式开关配置的要求，**命名空间隔离机制默认始终启用**：
+- **默认命名空间（`default`）**：默认数据是无前缀的（prefixless），即直接路由到原有的物理数据库表（如 `data_table_0`, `data_table_1` 等），行为与没有命名空间的原版逻辑完全一致。
+- **自定义命名空间**：通过 `AUTH <token>` 认证的客户端，数据会自动路由到共享的物理表 `ns_data_table`，并在内部采用独特的 Base-255 编码前缀实现前缀隔离。这避免了为每个命名空间创建物理表的系统开销。
 
-```ini
-[local]
-# 启用命名空间隔离 (true) 或 禁用 (false)
-namespace = true
-```
-
-### 0.2 未设置/禁用时的兼容逻辑 (Default/Disabled Behavior)
-当未在配置文件中设置 `namespace` 或将其显式设置为 `false` 时，系统将**保持与原有逻辑完全一致**：
-1. **无需前缀**：所有键的操作不会添加任何命名空间隔离前缀，即 `ApplyNamespace("key")` 会直接返回 `"key"`，底层的物理 Key 即为用户操作的原始 Key。
-2. **操作直通**：所有涉及命名空间持久化及解析的接口均会直接提前返回，不会对元数据表进行任何读写。
-3. **完全兼容**：系统整体的读写、检索与事务逻辑与重构前无异，保证了老版本部署的绝对向下兼容性。
+### 0.2 历史兼容切换配置 (Legacy Compatibility Mode)
+为保持对历史版本的完全兼容（在历史版本中，`default` 命名空间也带前缀 `\x01\x00`）：
+- 如果在配置文件 `eloqkv.ini` 的 `[local]` 段下显式设置 `namespace = true`，系统将启用**历史兼容模式**（即 `use_legacy_default_ns = true`）。
+- 在历史兼容模式下，默认命名空间的数据也会透明加上 `\x01\x00` 的前缀，从而与旧版数据保持一致。
 
 ---
 
