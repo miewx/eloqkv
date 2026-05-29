@@ -22,15 +22,15 @@ fi
 PURE_BRANCH="${CURRENT_BRANCH}_pure"
 echo "正在同步 $CURRENT_BRANCH -> $PURE_BRANCH ..."
 
-# 2. 检查未跟踪的 cpp, h, hpp 文件并临时追踪
-UNTRACKED_FILES=$(git ls-files --others --exclude-standard -- '*.[ch]' '*.hpp' '*.cpp')
+# 2. 检查未跟踪的 cpp, h, hpp, ini 文件并临时追踪
+UNTRACKED_FILES=$(git ls-files --others --exclude-standard -- '*.[ch]' '*.hpp' '*.cpp' '*.ini')
 if [ -n "$UNTRACKED_FILES" ]; then
     echo "$UNTRACKED_FILES" | xargs git add -N
 fi
 
 # 3. 生成差异 patch
 PATCH_FILE=$(mktemp "$DIR/.sync_patch_XXXXXX")
-git diff main -- '*.[ch]' '*.hpp' '*.cpp' > "$PATCH_FILE"
+git diff main -- '*.[ch]' '*.hpp' '*.cpp' '*.ini' > "$PATCH_FILE"
 
 # 清除临时意向标记
 if [ -n "$UNTRACKED_FILES" ]; then
@@ -41,7 +41,7 @@ fi
 if [ ! -s "$PATCH_FILE" ]; then
     rm -f "$PATCH_FILE"
     git branch -f "$PURE_BRANCH" main >/dev/null
-    echo "未检测到 cpp/h/hpp 修改，已同步 $PURE_BRANCH 为 main 分支。正在推送..."
+    echo "未检测到 cpp/h/hpp/ini 修改，已同步 $PURE_BRANCH 为 main 分支。正在推送..."
     git push -q -f origin "$PURE_BRANCH"
     echo "同步并推送完成！"
     exit 0
@@ -55,7 +55,7 @@ git worktree add "$TEMP_DIR" "$PURE_BRANCH" >/dev/null 2>&1
 
 if git -C "$TEMP_DIR" apply "$PATCH_FILE" >/dev/null 2>&1; then
     git -C "$TEMP_DIR" add -A
-    git -C "$TEMP_DIR" commit -q -m "Sync cpp/h/hpp changes from $CURRENT_BRANCH"
+    git -C "$TEMP_DIR" commit -q -m "Sync cpp/h/hpp/ini changes from $CURRENT_BRANCH"
     SUCCESS=true
 else
     SUCCESS=false
