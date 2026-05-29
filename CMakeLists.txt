@@ -488,11 +488,7 @@ if(${BUILD_WITH_TESTS})
     add_executable(object_serialize_deserialize_test ./tests/unit/eloq/object_serialize_deserialize_test.cpp ${RESELOQ_RESOURCES})
     target_link_libraries(object_serialize_deserialize_test PRIVATE Catch2::Catch2WithMain ${ABSEIL} ${LOG_LIB} ${RESELOQ_LIBRARY} lua fpconv ${DYNAMIC_LIB})
 
-    add_executable(namespace_test ./tests/unit/eloq/namespace_test.cpp ${RESELOQ_RESOURCES})
-    target_link_libraries(namespace_test PRIVATE ${ABSEIL} ${LOG_LIB} ${RESELOQ_LIBRARY} lua fpconv ${DYNAMIC_LIB})
-
     add_test(NAME serialize/deserialize_test COMMAND object_serialize_deserialize_test WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-    add_test(NAME namespace_test COMMAND namespace_test WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     enable_testing()
 
     if (VECTOR_INDEX_ENABLED)

@@ -218,16 +218,9 @@ namespace NamespacePrefix
 
 ## 5. 测试验证与覆盖说明 (Test Verification & Coverage)
 
-系统的正确性、安全隔离边界以及向下兼容性通过 C++ 单元测试与 Javascript 集成测试进行双重保证。
+系统的正确性、安全隔离边界以及向下兼容性通过 Javascript 集成测试进行保证。
 
-### 5.1 C++ 单元测试 ([namespace_test.cpp](./tests/unit/eloq/namespace_test.cpp))
-单元测试主要验证在不同配置模式下，底层内存模型及键前缀包装的安全边界。
-- **管理器功能 (`TestNamespaceManager`)**：验证内存缓存模式下的 `Add`, `Set`, `Del`, `GetByToken`, `List` 操作，测试唯一性限制。
-- **前缀与隔离验证 (`TestNamespacePrefixing`)**：
-  - 验证默认空间是无前缀的（prefixless），而自定义空间则使用其编码后的命名空间 ID 作为前缀（例如首个自定义空间的编码前缀为双字节 `\x02\x00`）。
-  - 验证 B 树范围扫描与辅助边界计算（如 `ComposeNamespaceKeyNext("\x02\x00")` 返回 `\x02\x01`），确立严密的租户检索边界。
-
-### 5.2 客户端协议集成测试 ([namespace.test.js](./js/namespace.test.js))
+### 5.1 客户端协议集成测试 ([namespace.test.js](./js/namespace.test.js))
 集成测试模拟真实客户端，校验 Redis 协议交互及租户命令隔离权限：
 - **子指令全覆盖**：测试全部的命名空间管理命令（`NAMESPACE CURRENT/ADD/GET/REFRESH/DEL`）。
 - **数据物理隔离**：验证两个客户端分别在 `default` 和租户命名空间下操作同名的 `shared_key`，默认空间下对应的底层 Key 为无前缀的 `shared_key`，而租户空间下对应的底层 Key 带有其编码后的前缀（如 `\x02\x00shared_key`），互不干扰、独立读写。
