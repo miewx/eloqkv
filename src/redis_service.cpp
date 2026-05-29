@@ -6467,7 +6467,7 @@ size_t RedisServiceImpl::MaxConnectionCount() const
 
 std::string RedisServiceImpl::GetNamespaceTokenFromDB(std::string_view ns)
 {
-    TransactionExecution *txm = NewTxm(IsolationLevel::RepeatableRead, CcProtocol::OccRead);
+    TransactionExecution *txm = NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
     if (txm == nullptr) return "";
 
     EloqKey db_key("n:" + std::string(ns), false);
@@ -6497,7 +6497,7 @@ std::string RedisServiceImpl::GetNamespaceFromTokenFromDB(std::string_view token
         return "default";
     }
 
-    TransactionExecution *txm = NewTxm(IsolationLevel::RepeatableRead, CcProtocol::OccRead);
+    TransactionExecution *txm = NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
     if (txm == nullptr) return "";
 
     std::unique_ptr<EloqKey> i_key;
@@ -7027,7 +7027,7 @@ bool RedisServiceImpl::DelNamespaceFromDB(std::string_view ns)
 std::map<std::string, std::string, std::less<>> RedisServiceImpl::ListNamespacesFromDB()
 {
     std::map<std::string, std::string, std::less<>> result;
-    TransactionExecution *txm = NewTxm(IsolationLevel::RepeatableRead, CcProtocol::OccRead);
+    TransactionExecution *txm = NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
     if (txm == nullptr) return result;
 
     std::vector<std::unique_ptr<EloqKey>> get_keys;
