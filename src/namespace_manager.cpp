@@ -1,33 +1,16 @@
 #include "namespace_manager.h"
 #include "b255_encode.h"
 #include <mutex>
-#ifndef UNIT_TEST
-#include "redis_service.h"
-#else
-#include <map>
-namespace EloqKV {
-class RedisServiceImpl {
-public:
-    bool AddNamespaceToDB(std::string_view ns, std::string_view token) { return false; }
-    bool SetNamespaceInDB(std::string_view ns, std::string_view token) { return false; }
-    bool DelNamespaceFromDB(std::string_view ns) { return false; }
-    std::string GetNamespaceTokenFromDB(std::string_view ns) { return ""; }
-    std::string GetNamespaceFromTokenFromDB(std::string_view token, std::string &ns_id) { return ""; }
-    std::map<std::string, std::string, std::less<>> ListNamespacesFromDB() { return {}; }
-};
-}
-#endif
 
 namespace EloqKV
 {
 
-bool NamespaceManager::Add(std::string_view ns, std::string_view token)
-{
-    if (server_)
-    {
-        return server_->AddNamespaceToDB(ns, token);
-    }
+// ==========================================
+// MemoryNamespaceStorage Implementation
+// ==========================================
 
+bool MemoryNamespaceStorage::Add(std::string_view ns, std::string_view token)
+{
     std::unique_lock<std::shared_mutex> lock(mu_);
     auto it_ns = ns_to_token_.find(ns);
     if (it_ns != ns_to_token_.end())
@@ -45,13 +28,8 @@ bool NamespaceManager::Add(std::string_view ns, std::string_view token)
     return true;
 }
 
-bool NamespaceManager::Set(std::string_view ns, std::string_view token)
+bool MemoryNamespaceStorage::Set(std::string_view ns, std::string_view token)
 {
-    if (server_)
-    {
-        return server_->SetNamespaceInDB(ns, token);
-    }
-
     std::unique_lock<std::shared_mutex> lock(mu_);
     auto it_token = token_to_ns_.find(token);
     if (it_token != token_to_ns_.end() && it_token->second != ns)
@@ -79,13 +57,8 @@ bool NamespaceManager::Set(std::string_view ns, std::string_view token)
     return true;
 }
 
-bool NamespaceManager::Del(std::string_view ns)
+bool MemoryNamespaceStorage::Del(std::string_view ns)
 {
-    if (server_)
-    {
-        return server_->DelNamespaceFromDB(ns);
-    }
-
     std::unique_lock<std::shared_mutex> lock(mu_);
     auto it_ns = ns_to_token_.find(ns);
     if (it_ns != ns_to_token_.end())
@@ -98,13 +71,8 @@ bool NamespaceManager::Del(std::string_view ns)
     return false;
 }
 
-std::string NamespaceManager::Get(std::string_view ns) const
+std::string MemoryNamespaceStorage::GetToken(std::string_view ns)
 {
-    if (server_)
-    {
-        return server_->GetNamespaceTokenFromDB(ns);
-    }
-
     std::shared_lock<std::shared_mutex> lock(mu_);
     auto it = ns_to_token_.find(ns);
     if (it != ns_to_token_.end())
@@ -114,20 +82,10 @@ std::string NamespaceManager::Get(std::string_view ns) const
     return "";
 }
 
-std::string NamespaceManager::GetByToken(std::string_view token) const
+std::string MemoryNamespaceStorage::GetNamespaceFromToken(std::string_view token, std::string &ns_id, uint64_t &epoch)
 {
-    std::string ns_id;
-    return GetByToken(token, ns_id);
-}
-
-std::string NamespaceManager::GetByToken(std::string_view token, std::string &ns_id) const
-{
-    if (server_)
-    {
-        return server_->GetNamespaceFromTokenFromDB(token, ns_id);
-    }
-
     ns_id = "";
+    epoch = 1;
     std::shared_lock<std::shared_mutex> lock(mu_);
     auto it = token_to_ns_.find(token);
     if (it != token_to_ns_.end())
@@ -142,15 +100,179 @@ std::string NamespaceManager::GetByToken(std::string_view token, std::string &ns
     return "";
 }
 
-std::map<std::string, std::string, std::less<>> NamespaceManager::List() const
+std::map<std::string, std::string, std::less<>> MemoryNamespaceStorage::List()
 {
-    if (server_)
-    {
-        return server_->ListNamespacesFromDB();
-    }
-
     std::shared_lock<std::shared_mutex> lock(mu_);
     return token_to_ns_;
 }
 
+// ==========================================
+// NamespaceManager Implementation
+// ==========================================
+
+NamespaceManager::NamespaceManager()
+    : storage_(std::make_unique<MemoryNamespaceStorage>())
+{
+}
+
+NamespaceManager::NamespaceManager(std::unique_ptr<INamespaceStorage> storage)
+    : storage_(std::move(storage))
+{
+}
+
+bool NamespaceManager::Add(std::string_view ns, std::string_view token)
+{
+    if (storage_)
+    {
+        return storage_->Add(ns, token);
+    }
+    return false;
+}
+
+bool NamespaceManager::Set(std::string_view ns, std::string_view token)
+{
+    if (storage_)
+    {
+        bool ok = storage_->Set(ns, token);
+        if (ok)
+        {
+            RemoveMetadata(ns);
+        }
+        return ok;
+    }
+    return false;
+}
+
+bool NamespaceManager::Del(std::string_view ns)
+{
+    if (storage_)
+    {
+        bool ok = storage_->Del(ns);
+        if (ok)
+        {
+            RemoveMetadata(ns);
+        }
+        return ok;
+    }
+    return false;
+}
+
+std::string NamespaceManager::Get(std::string_view ns) const
+{
+    if (storage_)
+    {
+        return storage_->GetToken(ns);
+    }
+    return "";
+}
+
+std::string NamespaceManager::GetByToken(std::string_view token) const
+{
+    std::string ns_id;
+    return GetByToken(token, ns_id);
+}
+
+std::string NamespaceManager::GetByToken(std::string_view token, std::string &ns_id) const
+{
+    if (storage_)
+    {
+        uint64_t dummy_epoch = 1;
+        return storage_->GetNamespaceFromToken(token, ns_id, dummy_epoch);
+    }
+    ns_id = "";
+    return "";
+}
+
+std::map<std::string, std::string, std::less<>> NamespaceManager::List() const
+{
+    if (storage_)
+    {
+        return storage_->List();
+    }
+    return {};
+}
+
+std::shared_ptr<NamespaceMetadata> NamespaceManager::GetMetadataByToken(std::string_view token) const
+{
+    {
+        std::shared_lock<std::shared_mutex> lock(meta_mu_);
+        auto it = token_metadata_.find(std::string(token));
+        if (it != token_metadata_.end())
+        {
+            return it->second;
+        }
+    }
+
+    if (storage_)
+    {
+        std::string ns_id;
+        uint64_t epoch = 1;
+        std::string ns_name = storage_->GetNamespaceFromToken(token, ns_id, epoch);
+        if (ns_name.empty())
+        {
+            return nullptr;
+        }
+
+        std::unique_lock<std::shared_mutex> lock(meta_mu_);
+        // Double check
+        auto it = token_metadata_.find(std::string(token));
+        if (it != token_metadata_.end())
+        {
+            return it->second;
+        }
+
+        auto meta = std::make_shared<NamespaceMetadata>();
+        meta->ns_name = ns_name;
+        meta->encoded_id = ns_id;
+        meta->epoch.store(epoch);
+
+        token_metadata_[std::string(token)] = meta;
+        ns_metadata_[ns_name] = meta;
+        return meta;
+    }
+
+    return nullptr;
+}
+
+std::shared_ptr<NamespaceMetadata> NamespaceManager::GetOrCreateMetadata(std::string_view ns_name, std::string_view encoded_id, uint64_t epoch)
+{
+    std::unique_lock<std::shared_mutex> lock(meta_mu_);
+    auto it = ns_metadata_.find(std::string(ns_name));
+    if (it != ns_metadata_.end())
+    {
+        it->second->epoch.store(epoch);
+        return it->second;
+    }
+
+    auto meta = std::make_shared<NamespaceMetadata>();
+    meta->ns_name = ns_name;
+    meta->encoded_id = encoded_id;
+    meta->epoch.store(epoch);
+
+    ns_metadata_[std::string(ns_name)] = meta;
+    return meta;
+}
+
+void NamespaceManager::RemoveMetadata(std::string_view ns_name)
+{
+    std::unique_lock<std::shared_mutex> lock(meta_mu_);
+    auto it = ns_metadata_.find(std::string(ns_name));
+    if (it != ns_metadata_.end())
+    {
+        for (auto token_it = token_metadata_.begin(); token_it != token_metadata_.end(); )
+        {
+            if (token_it->second == it->second)
+            {
+                token_it = token_metadata_.erase(token_it);
+            }
+            else
+            {
+                ++token_it;
+            }
+        }
+        ns_metadata_.erase(it);
+    }
+}
+
 } // namespace EloqKV
+

@@ -29,6 +29,7 @@
 #include "eloq_string.h"
 #include "redis_string_match.h"
 #include "tx_key.h"
+#include "namespace_prefix.h"
 
 namespace EloqKV
 {

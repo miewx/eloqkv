@@ -24,4 +24,15 @@ std::string EncodeBase255(uint64_t id)
     return result;
 }
 
+uint64_t DecodeBase255(std::string_view s)
+{
+    uint64_t id = 0;
+    for (char c : s)
+    {
+        uint64_t digit = static_cast<unsigned char>(c) - 1;
+        id = id * 255 + digit;
+    }
+    return id;
+}
+
 } // namespace EloqKV

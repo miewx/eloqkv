@@ -1490,14 +1490,14 @@ void PingCommand::Execute(RedisServiceImpl *redis_impl,
 void AuthCommand::Execute(RedisServiceImpl *redis_impl,
                           RedisConnectionContext *ctx)
 {
-    std::string ns_id;
-    std::string ns = redis_impl->GetNamespaceManager()->GetByToken(password_, ns_id);
-    if (!ns.empty())
+    auto ns_meta = redis_impl->GetNamespaceManager()->GetMetadataByToken(password_);
+    if (ns_meta)
     {
         result_.err_code_ = RD_OK;
         ctx->authenticated = true;
-        ctx->ns = std::move(ns);
-        ctx->ns_id = std::move(ns_id);
+        ctx->ns = ns_meta->ns_name;
+        ctx->ns_meta = ns_meta;
+        ctx->ns_id = NamespacePrefix::MakePrefixV1(ns_meta->encoded_id, ns_meta->epoch.load(std::memory_order_relaxed));
     }
     else if (password_ == requirepass)
     {
@@ -1505,6 +1505,7 @@ void AuthCommand::Execute(RedisServiceImpl *redis_impl,
         ctx->authenticated = true;
         ctx->ns = "default";
         ctx->ns_id = "";
+        ctx->ns_meta = nullptr;
     }
     else
     {
@@ -2348,8 +2349,12 @@ void DBSizeCommand::Execute(RedisServiceImpl *redis_impl,
 
             txm->Execute(&scan_batch_req);
             scan_batch_req.Wait();
-            success = !scan_batch_req.IsError();
-            if (!success) break;
+            if (scan_batch_req.IsError())
+            {
+                txservice::AbortTx(txm);
+                total_db_size_ = 0;
+                return;
+            }
 
             for (const auto &tuple : scan_batch)
             {
@@ -10598,23 +10603,31 @@ std::tuple<bool, NamespaceCommand> ParseNamespaceCommand(
     const std::vector<std::string_view> &args, OutputHandler *output)
 {
     assert(args[0] == "namespace");
-    if (args.size() == 2 && args[1] == "current")
+    if (args.size() < 2)
+    {
+        output->OnError("ERR NAMESPACE subcommand must be one of GET, DEL, ADD, REFRESH and CURRENT");
+        return {false, NamespaceCommand()};
+    }
+    std::string subcommand(args[1]);
+    std::transform(subcommand.begin(), subcommand.end(), subcommand.begin(), ::tolower);
+
+    if (args.size() == 2 && subcommand == "current")
     {
         return {true, NamespaceCommand("current", "", "")};
     }
-    else if (args.size() == 3 && args[1] == "get")
+    else if (args.size() == 3 && subcommand == "get")
     {
         return {true, NamespaceCommand("get", args[2], "")};
     }
-    else if (args.size() == 3 && args[1] == "del")
+    else if (args.size() == 3 && subcommand == "del")
     {
         return {true, NamespaceCommand("del", args[2], "")};
     }
-    else if (args.size() == 3 && args[1] == "add")
+    else if (args.size() == 3 && subcommand == "add")
     {
         return {true, NamespaceCommand("add", args[2], "")};
     }
-    else if (args.size() == 3 && args[1] == "refresh")
+    else if (args.size() == 3 && subcommand == "refresh")
     {
         return {true, NamespaceCommand("refresh", args[2], "")};
     }

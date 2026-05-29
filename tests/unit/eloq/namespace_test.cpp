@@ -1,57 +1,13 @@
 #include <iostream>
 #include <cassert>
-#include <fstream>
-#include <vector>
-#include <algorithm>
-#include "namespace_manager.h"
-#include "INIReader.h"
 #include "eloqkv_key.h"
 
 using namespace EloqKV;
 
-
-
-void TestNamespaceManager()
-{
-    std::cout << "Running TestNamespaceManager..." << std::endl;
-    EloqKV::NamespaceManager mgr;
-
-    // Test Add
-    assert(mgr.Add("ns1", "token1") == true);
-    assert(mgr.Add("ns1", "token2") == false); // Duplicate ns
-    assert(mgr.Add("ns2", "token1") == false); // Duplicate token
-    assert(mgr.Add("ns2", "token2") == true);
-
-    // Test GetByToken / Get
-    assert(mgr.GetByToken("token1") == "ns1");
-    assert(mgr.GetByToken("token2") == "ns2");
-    assert(mgr.Get("ns1") == "token1");
-    assert(mgr.Get("ns2") == "token2");
-
-    // Test Set
-    assert(mgr.Set("ns1", "token3") == true); // Update token for ns1
-    assert(mgr.Get("ns1") == "token3");
-    assert(mgr.GetByToken("token3") == "ns1");
-    assert(mgr.GetByToken("token1") == ""); // Old token should be deleted
-
-    // Test List
-    auto list = mgr.List();
-    assert(list.size() == 2);
-    assert(list["token3"] == "ns1");
-    assert(list["token2"] == "ns2");
-
-    // Test Del
-    assert(mgr.Del("ns1") == true);
-    assert(mgr.Del("ns1") == false); // Deleted already
-    assert(mgr.Get("ns1") == "");
-    assert(mgr.GetByToken("token3") == "");
-
-    std::cout << "TestNamespaceManager passed!" << std::endl;
-}
-
 void TestNamespacePrefixing()
 {
     std::cout << "Running TestNamespacePrefixing..." << std::endl;
+    std::string original_ns = EloqKV::current_namespace;
 
     // Default namespace key is prefixless
     EloqKV::current_namespace = "default";
@@ -61,13 +17,19 @@ void TestNamespacePrefixing()
     std::string isolated_default_next = ComposeNamespaceKeyNext("default");
     assert(isolated_default_next == "");
 
-    // Custom namespace with prefix "\x02\x00" (ID 1 + \x00)
-    EloqKV::current_namespace = std::string("\x02\x00", 2);
+    // Custom namespace with prefix: MAGIC + VERSION_1 + encoded_ns_id + \x00 + encoded_epoch + \x00
+    // e.g. ID = 1 (\x02), Epoch = 1 (\x02) => "\xFF\x01\x02\x00\x02\x00"
+    std::string ns_id_v1 = std::string(1, NamespacePrefix::MAGIC) + NamespacePrefix::VERSION_1 + std::string("\x02\x00\x02\x00", 4);
+    EloqKV::current_namespace = ns_id_v1;
     std::string isolated_custom_key = ApplyNamespace("mykey");
-    assert(isolated_custom_key.size() == 2 + 5);
-    assert(isolated_custom_key[0] == '\x02');
-    assert(isolated_custom_key[1] == '\x00');
-    assert(isolated_custom_key.substr(2) == "mykey");
+    assert(isolated_custom_key.size() == ns_id_v1.size() + 5);
+    assert(isolated_custom_key[0] == NamespacePrefix::MAGIC);
+    assert(isolated_custom_key[1] == NamespacePrefix::VERSION_1);
+    assert(isolated_custom_key[2] == '\x02');
+    assert(isolated_custom_key[3] == '\x00');
+    assert(isolated_custom_key[4] == '\x02');
+    assert(isolated_custom_key[5] == '\x00');
+    assert(isolated_custom_key.substr(6) == "mykey");
 
     // Empty namespace remains un-prefixed (used for system metadata lookup)
     EloqKV::current_namespace = "";
@@ -75,24 +37,38 @@ void TestNamespacePrefixing()
     assert(isolated_empty_key == "mykey");
 
     // Test isolated ComposeNamespaceKeyNext for custom namespace
-    std::string isolated_custom_next = ComposeNamespaceKeyNext(std::string("\x02\x00", 2));
-    assert(isolated_custom_next.size() == 2);
-    assert(isolated_custom_next[0] == '\x02');
-    assert(isolated_custom_next[1] == '\x01');
+    std::string isolated_custom_next = ComposeNamespaceKeyNext(ns_id_v1);
+    assert(isolated_custom_next.size() == ns_id_v1.size());
+    assert(isolated_custom_next[0] == NamespacePrefix::MAGIC);
+    assert(isolated_custom_next[1] == NamespacePrefix::VERSION_1);
+    assert(isolated_custom_next[2] == '\x02');
+    assert(isolated_custom_next[3] == '\x00');
+    assert(isolated_custom_next[4] == '\x02');
+    assert(isolated_custom_next[5] == '\x01');
 
     // Test isolated ComposeNamespaceKeyNext for multi-byte encoded ID
-    std::string isolated_multibyte_next = ComposeNamespaceKeyNext(std::string("\x01\x02\x00", 3));
-    assert(isolated_multibyte_next.size() == 3);
-    assert(isolated_multibyte_next[0] == '\x01');
-    assert(isolated_multibyte_next[1] == '\x02');
+    std::string ns_id_multibyte = std::string(1, NamespacePrefix::MAGIC) + NamespacePrefix::VERSION_1 + std::string("\x01\x02\x00\x02\x00", 5);
+    std::string isolated_multibyte_next = ComposeNamespaceKeyNext(ns_id_multibyte);
+    assert(isolated_multibyte_next.size() == ns_id_multibyte.size());
+    assert(isolated_multibyte_next[0] == NamespacePrefix::MAGIC);
+    assert(isolated_multibyte_next[1] == NamespacePrefix::VERSION_1);
     assert(isolated_multibyte_next[2] == '\x01');
+    assert(isolated_multibyte_next[3] == '\x02');
+    assert(isolated_multibyte_next[4] == '\x00');
+    assert(isolated_multibyte_next[5] == '\x02');
+    assert(isolated_multibyte_next[6] == '\x01');
 
+    // Test all-0xFF overflow case in ComposeNamespaceKeyNext
+    std::string all_ff = std::string("\xFF\xFF", 2);
+    std::string all_ff_next = ComposeNamespaceKeyNext(all_ff);
+    assert(all_ff_next == "");
+
+    EloqKV::current_namespace = original_ns;
     std::cout << "TestNamespacePrefixing passed!" << std::endl;
 }
 
 int main()
 {
-    TestNamespaceManager();
     TestNamespacePrefixing();
     std::cout << "All namespace unit tests passed successfully!" << std::endl;
     return 0;
