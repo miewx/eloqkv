@@ -4,7 +4,6 @@ import gci from "@3-/gci";
 import fs from "node:fs";
 import path from "node:path";
 import ERR from "@3-/log/ERR.js";
-import WARN from "@3-/log/WARN.js";
 
 // 1. Ensure we are in the repository root directory
 const repo_root = import.meta.dirname,
@@ -147,27 +146,8 @@ const repo_root = import.meta.dirname,
           process.env.NO_PUSH = "1";
           await gci(git_url, temp_dir);
         } catch (err) {
-          WARN("警告：gci 自动生成提交消息并提交失败，回退到普通 git commit。", err.message || err);
-          const default_msg = "Sync cpp/h/hpp/ini changes from " + current_branch,
-            res = await temp_git.commit(default_msg);
-          if (res && res.commit) {
-            const { branch: b, commit: c, summary: s } = res;
-            console.log(
-              "[" +
-                b +
-                " " +
-                c +
-                "] " +
-                default_msg +
-                "\n " +
-                s.changes +
-                " files changed, " +
-                s.insertions +
-                " insertions(+), " +
-                s.deletions +
-                " deletions(-)",
-            );
-          }
+          ERR("错误：gci 自动生成提交消息并提交失败，退出同步。", err.message || err);
+          throw err;
         }
       }
 
@@ -182,7 +162,7 @@ const repo_root = import.meta.dirname,
           console.log("同步并推送完成！");
         } catch (e) {
           ERR("错误：推送 " + pure_branch + " 失败。", e.message || e);
-          process.exit(1);
+          throw e;
         }
       }
     } finally {
@@ -199,6 +179,10 @@ const repo_root = import.meta.dirname,
     }
   };
 
-await run();
+try {
+  await run();
+} catch {
+  process.exit(1);
+}
 
 export default run;
