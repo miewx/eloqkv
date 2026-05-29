@@ -345,20 +345,7 @@ if(VECTOR_INDEX_ENABLED)
     set(DYNAMIC_LIB ${DYNAMIC_LIB} ${CURL_LIBRARIES})
 endif()
 
-# Set up base include directories
-set(INCLUDE_DIRS
-    ${PROJECT_SOURCE_DIR}/
-    ${PROJECT_SOURCE_DIR}/include
-    ${PROJECT_SOURCE_DIR}/include/namespace
-    ${PROJECT_SOURCE_DIR}/include/redis
-)
 
-if(VECTOR_INDEX_ENABLED)
-    set(INCLUDE_DIRS ${INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/include/vector)
-endif()
-
-# Apply all includes at once
-include_directories(${INCLUDE_DIRS})
 
 # Build data_substrate library first
 if(NOT BUILD_ELOQKV_AS_LIBRARY)
@@ -425,9 +412,20 @@ SET(RESELOQ_LIBRARY ${RESELOQ_LIBRARY} data_substrate)
 # crcspeed
 SET(CRCSPEED_SOURCES crcspeed/crcspeed.c crcspeed/crc16speed.c crcspeed/crc64speed.c)
 SET(RESELOQ_RESOURCES ${RESELOQ_RESOURCES} ${CRCSPEED_SOURCES})
+# Set up base include directories
+set(INCLUDE_DIRS
+    ${PROJECT_SOURCE_DIR}/
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/include/namespace
+    ${PROJECT_SOURCE_DIR}/include/redis
+)
 
+if(VECTOR_INDEX_ENABLED)
+    set(INCLUDE_DIRS ${INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/include/vector)
+endif()
 
-
+# Apply all includes at once
+include_directories(${INCLUDE_DIRS})
 set(ABSEIL
     absl::btree
     absl::flat_hash_map
