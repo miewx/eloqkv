@@ -11,6 +11,10 @@ class RedisClient {
       maxRetriesPerRequest: 0,
       showFriendlyErrorStack: true,
       lazyConnect: true,
+      enableReadyCheck: false,
+    });
+    this.client.on("error", (err) => {
+      // Ignore unhandled connection/auth errors to prevent test crashes
     });
   }
 
