@@ -65,7 +65,8 @@ std::string& GetCurrentNamespace()
     return *static_cast<std::string*>(ptr);
 }
 
-bool enable_namespace = false;
+bool enable_namespace = true;
+bool use_legacy_default_ns = false;
 static const uint16_t crc16_table[256] = {
     0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7, 0x8108,
     0x9129, 0xa14a, 0xb16b, 0xc18c, 0xd1ad, 0xe1ce, 0xf1ef, 0x1231, 0x0210,

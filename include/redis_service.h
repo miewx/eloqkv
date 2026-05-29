@@ -555,6 +555,7 @@ private:
 
     std::vector<TableName> redis_table_names_;
     std::unique_ptr<TableName> namespace_table_name_;
+    std::unique_ptr<TableName> ns_data_table_name_;
 
     std::vector<std::unique_ptr<RedisCommandHandler>> hd_vec_;
 

@@ -1781,6 +1781,11 @@ void NamespaceCommand::OutputResult(OutputHandler *reply) const
 void SelectCommand::Execute(RedisServiceImpl *redis_impl,
                             RedisConnectionContext *ctx)
 {
+    if (ctx && ctx->ns != "default" && !ctx->ns.empty())
+    {
+        result_.err_code_ = RD_ERR_SELECT_FORBIDDEN_IN_NS;
+        return;
+    }
     if (db_id_ >= 0 && db_id_ < databases)
     {
         result_.err_code_ = RD_OK;
@@ -2234,8 +2239,146 @@ void ClientKillCommand::OutputResult(OutputHandler *reply) const
 void DBSizeCommand::Execute(RedisServiceImpl *redis_impl,
                             RedisConnectionContext *ctx)
 {
+    if (ctx && ctx->ns != "default" && !ctx->ns.empty())
+    {
+        std::string ns_prefix = ctx->ns_id;
+        std::string ns_prefix_next = ComposeNamespaceKeyNext(ns_prefix);
+        const TableName &table_name = *redis_impl->RedisTableName(ctx->db_id, ctx);
+
+        TransactionExecution *txm = redis_impl->NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
+        if (txm == nullptr)
+        {
+            total_db_size_ = 0;
+            return;
+        }
+
+        CatalogKey catalog_key(table_name);
+        TxKey cat_tx_key(&catalog_key);
+        CatalogRecord catalog_rec;
+        ReadTxRequest read_req(&txservice::catalog_ccm_name,
+                               0,
+                               &cat_tx_key,
+                               &catalog_rec,
+                               false,
+                               false,
+                               true,
+                               0,
+                               false,
+                               false,
+                               false,
+                               nullptr,
+                               nullptr,
+                               txm);
+        txm->Execute(&read_req);
+        read_req.Wait();
+        if (read_req.IsError())
+        {
+            txservice::AbortTx(txm);
+            total_db_size_ = 0;
+            return;
+        }
+        uint64_t schema_version = catalog_rec.SchemaTs();
+
+        std::string old_ns_temp = std::move(current_namespace);
+        current_namespace = "";
+        EloqKey start_key(ns_prefix);
+        EloqKey end_key(ns_prefix_next);
+        current_namespace = std::move(old_ns_temp);
+
+        TxKey start_tx_key(&start_key);
+        TxKey end_tx_key(&end_key);
+
+        txservice::BucketScanSavePoint save_point;
+
+        ScanOpenTxRequest scan_open(
+            &table_name,
+            schema_version,
+            ScanIndexType::Primary,
+            &start_tx_key,
+            true,
+            &end_tx_key,
+            false,
+            ScanDirection::Forward,
+            false,
+            false,
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            nullptr,
+            nullptr,
+            txm,
+            -1,
+            "",
+            &save_point);
+
+        bool success = redis_impl->SendTxRequestAndWaitResult(txm, &scan_open, nullptr);
+        if (!success)
+        {
+            txservice::AbortTx(txm);
+            total_db_size_ = 0;
+            return;
+        }
+
+        uint64_t scan_alias = scan_open.Result();
+        if (scan_alias == UINT64_MAX)
+        {
+            txservice::AbortTx(txm);
+            total_db_size_ = 0;
+            return;
+        }
+
+        size_t current_index = 0;
+        size_t plan_size = save_point.PlanSize();
+        txservice::BucketScanPlan plan = save_point.PickPlan(current_index);
+        std::vector<txservice::ScanBatchTuple> scan_batch;
+
+        int64_t count = 0;
+
+        while (current_index < plan_size)
+        {
+            scan_batch.clear();
+            ScanBatchTxRequest scan_batch_req(
+                scan_alias,
+                table_name,
+                &scan_batch,
+                nullptr,
+                nullptr,
+                txm,
+                -1,
+                "",
+                &plan);
+
+            success = redis_impl->SendTxRequestAndWaitResult(txm, &scan_batch_req, nullptr);
+            if (!success) break;
+
+            for (const auto &tuple : scan_batch)
+            {
+                if (tuple.status_ == txservice::RecordStatus::Normal)
+                {
+                    count++;
+                }
+            }
+
+            if (scan_batch_req.Result())
+            {
+                current_index++;
+                if (current_index < plan_size)
+                {
+                    plan = save_point.PickPlan(current_index);
+                }
+            }
+        }
+
+        txservice::CommitTx(txm);
+        total_db_size_ = count;
+        return;
+    }
+
     std::vector<TableName> table_names;
-    const TableName *tbn = redis_impl->RedisTableName(ctx->db_id);
+    const TableName *tbn = redis_impl->RedisTableName(ctx->db_id, ctx);
     table_names.emplace_back(
         tbn->StringView(), tbn->Type(), TableEngine::EloqKv);
     auto result = FetchDBSize(std::move(table_names));

@@ -437,4 +437,95 @@ describe("EloqKV 命名空间隔离与管理", () => {
     const db_size_after = await default_client.send("DBSIZE", []);
     expect(db_size_before - db_size_after).toBe(3);
   });
+
+  test("命名空间下 FLUSHDB 数据隔离与清空", async () => {
+    using default_client = await authClient();
+    const ns_name = "ns_flushdb_test";
+
+    const token = await default_client.send("namespace", ["add", [ns_name]]);
+    using ns_client = await authClient(token);
+
+    // 写入测试数据到命名空间
+    await ns_client.send("SET", ["ns_k1", "ns_v1"]);
+    await ns_client.send("SET", ["ns_k2", "ns_v2"]);
+
+    // 写入测试数据到默认命名空间
+    await default_client.send("SET", ["def_k1", "def_v1"]);
+
+    // 校验命名空间的大小为 2
+    const ns_dbsize_before = await ns_client.send("DBSIZE", []);
+    expect(ns_dbsize_before).toBe(2);
+
+    // 在命名空间下执行 FLUSHDB
+    const flush_res = await ns_client.send("FLUSHDB", []);
+    expect(flush_res).toBe("OK");
+
+    // 校验命名空间下的键已被清空
+    const ns_dbsize_after = await ns_client.send("DBSIZE", []);
+    expect(ns_dbsize_after).toBe(0);
+    expect(await ns_client.send("GET", ["ns_k1"])).toBeNull();
+
+    // 校验默认空间下的键不受影响
+    expect(await default_client.send("GET", ["def_k1"])).toBe("def_v1");
+
+    // 清理默认空间的测试键
+    await default_client.send("DEL", ["def_k1"]);
+    await default_client.send("namespace", ["del", [ns_name]]);
+  });
+
+  test("命名空间下 FLUSHALL 数据隔离与清空", async () => {
+    using default_client = await authClient();
+    const ns_name = "ns_flushall_test";
+
+    const token = await default_client.send("namespace", ["add", [ns_name]]);
+    using ns_client = await authClient(token);
+
+    // 写入测试数据到命名空间
+    await ns_client.send("SET", ["ns_k1", "ns_v1"]);
+
+    // 写入测试数据到默认命名空间
+    await default_client.send("SET", ["def_k1", "def_v1"]);
+
+    // 校验命名空间的大小为 1
+    const ns_dbsize_before = await ns_client.send("DBSIZE", []);
+    expect(ns_dbsize_before).toBe(1);
+
+    // 在命名空间下执行 FLUSHALL
+    const flush_res = await ns_client.send("FLUSHALL", []);
+    expect(flush_res).toBe("OK");
+
+    // 校验命名空间下的键已被清空
+    const ns_dbsize_after = await ns_client.send("DBSIZE", []);
+    expect(ns_dbsize_after).toBe(0);
+    expect(await ns_client.send("GET", ["ns_k1"])).toBeNull();
+
+    // 校验默认空间下的键不受影响
+    expect(await default_client.send("GET", ["def_k1"])).toBe("def_v1");
+
+    // 清理默认空间的测试键
+    await default_client.send("DEL", ["def_k1"]);
+    await default_client.send("namespace", ["del", [ns_name]]);
+  });
+
+  test("自定义命名空间下禁止执行 SELECT", async () => {
+    using default_client = await authClient();
+    const ns_name = "ns_select_test";
+
+    const token = await default_client.send("namespace", ["add", [ns_name]]);
+    using ns_client = await authClient(token);
+
+    // 默认空间支持 SELECT
+    const def_select_res = await default_client.send("SELECT", [1]);
+    expect(def_select_res).toBe("OK");
+    // 切回 DB 0
+    await default_client.send("SELECT", [0]);
+
+    // 自定义命名空间禁止 SELECT
+    await expectToFail(
+      ns_client.send("SELECT", [1]),
+      "SELECT is not allowed in custom namespace",
+    );
+
+    await default_client.send("namespace", ["del", [ns_name]]);
+  });
 });

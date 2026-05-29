@@ -37,6 +37,7 @@ uint16_t CRC16_XMODEM(const char *ptr, int32_t len);
 std::string& GetCurrentNamespace();
 #define current_namespace GetCurrentNamespace()
 extern bool enable_namespace;
+extern bool use_legacy_default_ns;
 
 inline std::string ComposeNamespaceKey(std::string_view ns, std::string_view key)
 {
@@ -47,8 +48,19 @@ inline std::string ComposeNamespaceKey(std::string_view ns, std::string_view key
     std::string_view actual_ns = ns;
     if (actual_ns == "default")
     {
-        static const std::string default_ns_prefix = std::string(1, '\x01') + std::string(1, '\x00');
-        actual_ns = default_ns_prefix;
+        if (use_legacy_default_ns)
+        {
+            static const std::string default_ns_prefix = std::string(1, '\x01') + std::string(1, '\x00');
+            actual_ns = default_ns_prefix;
+        }
+        else
+        {
+            actual_ns = "";
+        }
+    }
+    if (actual_ns.empty())
+    {
+        return std::string(key);
     }
     std::string ns_key;
     ns_key.reserve(actual_ns.size() + key.size());
@@ -66,8 +78,19 @@ inline std::string ComposeNamespaceKeyNext(std::string_view ns)
     std::string_view actual_ns = ns;
     if (actual_ns == "default")
     {
-        static const std::string default_ns_prefix = std::string(1, '\x01') + std::string(1, '\x00');
-        actual_ns = default_ns_prefix;
+        if (use_legacy_default_ns)
+        {
+            static const std::string default_ns_prefix = std::string(1, '\x01') + std::string(1, '\x00');
+            actual_ns = default_ns_prefix;
+        }
+        else
+        {
+            actual_ns = "";
+        }
+    }
+    if (actual_ns.empty())
+    {
+        return "";
     }
     std::string ns_prefix(actual_ns);
     for (int i = static_cast<int>(ns_prefix.size()) - 1; i >= 0; --i)
