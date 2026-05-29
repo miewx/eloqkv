@@ -12,7 +12,6 @@
 #ifndef INIREADER_H
 #define INIREADER_H
 
-#include <stddef.h>
 #include <map>
 #include <string>
 
@@ -94,9 +93,6 @@ public:
     // Return true if a value exists with the given section and field names.
     INI_API bool HasValue(const std::string &section,
                           const std::string &name) const;
-
-    // Get all values under a section as a map
-    INI_API std::map<std::string, std::string> GetSectionValues(const std::string &section) const;
 
 private:
     int _error;
