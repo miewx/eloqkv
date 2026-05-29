@@ -9,12 +9,14 @@
 namespace EloqKV
 {
 
+constexpr std::string_view kDefaultNamespace = "default";
+
 std::string& GetCurrentNamespace();
 #define current_namespace GetCurrentNamespace()
 
 inline std::string ComposeNamespaceKey(std::string_view ns, std::string_view key)
 {
-    if (ns.empty() || ns == "default")
+    if (ns.empty() || ns == kDefaultNamespace)
     {
         return std::string(key);
     }
@@ -27,7 +29,7 @@ inline std::string ComposeNamespaceKey(std::string_view ns, std::string_view key
 
 inline std::string ComposeNamespaceKeyNext(std::string_view ns)
 {
-    if (ns.empty() || ns == "default")
+    if (ns.empty() || ns == kDefaultNamespace)
     {
         return "";
     }

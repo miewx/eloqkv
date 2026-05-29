@@ -30,14 +30,14 @@ std::string& GetCurrentNamespace()
 
     if (!bthread_key_initialized || bthread_self() == 0)
     {
-        thread_local std::string fallback_ns = "default";
+        thread_local std::string fallback_ns = std::string(kDefaultNamespace);
         return fallback_ns;
     }
 
     void* ptr = bthread_getspecific(ns_bthread_key);
     if (ptr == nullptr)
     {
-        std::string* ns_ptr = new std::string("default");
+        std::string* ns_ptr = new std::string(kDefaultNamespace);
         bthread_setspecific(ns_bthread_key, ns_ptr);
         return *ns_ptr;
     }

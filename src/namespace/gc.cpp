@@ -6,6 +6,7 @@
 #include "b255_encode.h"
 #include "tx_execution.h"
 #include "tx_request.h"
+#include "tx_util.h"
 #include <glog/logging.h>
 #include "namespace/prefix.h"
 

@@ -39,6 +39,7 @@
 #include "redis_stats.h"
 #include "b255_encode.h"
 #include "namespace/manager.h"
+#include "namespace/context.h"
 
 namespace EloqKV
 {
@@ -118,7 +119,7 @@ public:
     bool authenticated{false};
 
     int db_id{0};
-    std::string ns{"default"};
+    std::string ns{kDefaultNamespace};
     std::string ns_id{""};
     std::shared_ptr<NamespaceMetadata> ns_meta{nullptr};
 
@@ -163,7 +164,7 @@ public:
 private:
     void InitNamespaceState()
     {
-        ns = "default";
+        ns = kDefaultNamespace;
         ns_id = "";
     }
 };

@@ -6,6 +6,7 @@
 #include "b255_encode.h"
 #include "tx_execution.h"
 #include "tx_request.h"
+#include "tx_util.h"
 #include <glog/logging.h>
 #include "namespace/prefix.h"
 
@@ -359,7 +360,7 @@ bool NamespaceStorage::Set(std::string_view ns, const NamespaceToken &token)
 
         GetCommand cmd_id;
         ObjectCommandTxRequest tx_req_id(server_->NamespaceTableName(), next_id_key.get(), &cmd_id, /*auto_commit=*/false, /*always_redirect=*/true, txm);
-        success = server_->ExecuteNamespaceTxRequest(txm, tx_req_id.get());
+        success = server_->ExecuteNamespaceTxRequest(txm, &tx_req_id);
         if (!success)
         {
             txservice::AbortTx(txm);
