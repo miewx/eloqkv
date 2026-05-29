@@ -55,6 +55,21 @@ const repo_root = import.meta.dirname,
     // 3. 创建临时工作区以进行更新
     let temp_dir = "";
     try {
+      // 自动清理可能残留的临时工作区目录与 Git 注册记录，防止冲突
+      try {
+        const files = fs.readdirSync(repo_root);
+        for (const file of files) {
+          if (file.startsWith(".sync_worktree_")) {
+            const full_path = path.join(repo_root, file);
+            console.log("检测到残留的临时工作区目录，正在清理：" + file);
+            fs.rmSync(full_path, { recursive: true, force: true });
+          }
+        }
+        await git.raw(["worktree", "prune"]);
+      } catch (err) {
+        console.warn("清理历史残留工作区时发生警告:", err.message || err);
+      }
+
       temp_dir = fs.mkdtempSync(path.join(repo_root, ".sync_worktree_"));
       // git worktree add expects the directory to either not exist or be empty.
       // We remove it first so git can create/initialize it.
