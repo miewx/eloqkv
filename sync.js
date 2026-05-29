@@ -7,6 +7,7 @@ import { execSync } from "node:child_process";
 // 1. Ensure we are in the repository root directory
 const repoRoot = import.meta.dirname;
 cd(repoRoot);
+$.verbose = 1;
 
 // Helper to check if a command exists in PATH
 function commandExists(cmd) {
@@ -141,25 +142,12 @@ async function run() {
     } else {
       console.log("正在基于代码提交更改...");
 
-      let gciPath = "/Users/z/.bin/gci";
       let useGci = false;
-      let gciCmd = "";
-
-      if (commandExists("gci")) {
-        useGci = true;
-        gciCmd = "gci";
-      } else {
-        try {
-          fs.accessSync(gciPath, fs.constants.X_OK);
-          useGci = true;
-          gciCmd = gciPath;
-        } catch (e) {}
-      }
 
       if (useGci) {
-        await $({ stdio: "inherit" })`${gciCmd}`;
+        // unreachable
       } else {
-        console.warn("警告：未找到自定义提交命令 gci，回退到普通 git commit。");
+        console.warn("警告：回退到普通 git commit。");
         await $`git commit -m "Sync cpp/h/hpp/ini changes from ${currentBranch}"`;
       }
     }
