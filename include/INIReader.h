@@ -12,6 +12,7 @@
 #ifndef INIREADER_H
 #define INIREADER_H
 
+#include <stddef.h>
 #include <map>
 #include <string>
 
