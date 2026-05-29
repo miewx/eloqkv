@@ -38,17 +38,12 @@ elif [ "$(uname)" = "Darwin" ]; then
   fi
 fi
 
-if [ -z "$JOBS" ] || [ "$JOBS" -lt 1 ]; then
-  JOBS=1
-fi
-
-if [ ! -d "build" ]; then
   mkdir build
 fi
 
 cd build
 
 cmake -DWITH_LOG_SERVICE=ON ..
-make -j$JOBS
+make
 chmod +x eloqkv
 

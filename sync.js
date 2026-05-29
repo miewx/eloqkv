@@ -153,7 +153,6 @@ const repo_root = import.meta.dirname,
 
       if (!diff_text.trim()) {
         console.log("没有检测到任何文件变化，无需提交。");
-        fs.writeFileSync(path.join(temp_dir, ".no_changes"), "");
       } else {
         console.log("正在基于代码提交更改...");
         try {
@@ -167,18 +166,13 @@ const repo_root = import.meta.dirname,
       }
 
       // 9. 推送分支
-      const no_changes_path = path.join(temp_dir, ".no_changes");
-      if (fs.existsSync(no_changes_path)) {
-        console.log("无需推送，" + pure_branch + " 已是最新的。");
-      } else {
-        console.log("正在推送 " + pure_branch + " 到远程仓库...");
-        try {
-          await temp_git.push(["-f", "origin", pure_branch]);
-          console.log("同步并推送完成！");
-        } catch (e) {
-          ERR("错误：推送 " + pure_branch + " 失败。", e.message || e);
-          throw e;
-        }
+      console.log("正在推送 " + pure_branch + " 到远程仓库...");
+      try {
+        await temp_git.push(["-f", "origin", pure_branch]);
+        console.log("同步并推送完成！");
+      } catch (e) {
+        ERR("错误：推送 " + pure_branch + " 失败。", e.message || e);
+        throw e;
       }
     } finally {
       // 确保清理临时工作区
