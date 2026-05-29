@@ -10,6 +10,8 @@ namespace EloqKV
 
 inline bool Base64UrlDecode(std::string_view src, uint8_t *dst_bytes, size_t dst_len)
 {
+    if (src.size() % 4 == 1) return false;
+
     auto char_to_val = [](char c) -> int {
         if (c >= 'A' && c <= 'Z') return c - 'A';
         if (c >= 'a' && c <= 'z') return c - 'a' + 26;
@@ -35,6 +37,12 @@ inline bool Base64UrlDecode(std::string_view src, uint8_t *dst_bytes, size_t dst
             dst_bytes[dst_idx++] = static_cast<uint8_t>((val >> bits) & 0xFF);
         }
     }
+
+    if (bits > 0)
+    {
+        if ((val & ((1U << bits) - 1)) != 0) return false;
+    }
+
     return dst_idx == dst_len;
 }
 

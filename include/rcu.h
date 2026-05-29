@@ -41,7 +41,7 @@ public:
         }
         else
         {
-            auto res = func(*copy);
+            decltype(auto) res = func(*copy);
             state_.store(std::shared_ptr<const T>(copy), std::memory_order_release);
             return res;
         }

@@ -10572,7 +10572,8 @@ std::tuple<bool, NamespaceCommand> ParseNamespaceCommand(
         return {false, NamespaceCommand()};
     }
     std::string subcommand(args[1]);
-    std::transform(subcommand.begin(), subcommand.end(), subcommand.begin(), ::tolower);
+    std::transform(subcommand.begin(), subcommand.end(), subcommand.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
 
     if (args.size() == 2 && subcommand == "current")
     {

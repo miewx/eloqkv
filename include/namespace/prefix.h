@@ -27,17 +27,18 @@ namespace NamespacePrefix
     {
         size_t ns_start = 0;
         size_t delim1 = full_key.find(B255_DELIMITER, ns_start);
-        if (delim1 == std::string_view::npos) return false;
-
-        ns_id = full_key.substr(ns_start, delim1 - ns_start);
+        if (delim1 == std::string_view::npos || delim1 <= ns_start) return false;
 
         size_t epoch_start = delim1 + 1;
         size_t delim2 = full_key.find(B255_DELIMITER, epoch_start);
-        if (delim2 == std::string_view::npos) return false;
+        if (delim2 == std::string_view::npos || delim2 <= epoch_start) return false;
 
         std::string_view encoded_epoch = full_key.substr(epoch_start, delim2 - epoch_start);
-        epoch = DecodeBase255(encoded_epoch);
+        auto decoded_epoch = DecodeBase255(encoded_epoch);
+        if (!decoded_epoch.has_value()) return false;
 
+        ns_id = full_key.substr(ns_start, delim1 - ns_start);
+        epoch = *decoded_epoch;
         user_key = full_key.substr(delim2 + 1);
         return true;
     }

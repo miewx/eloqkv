@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <optional>
 
 namespace EloqKV
 {
@@ -14,6 +15,6 @@ constexpr char B255_DELIMITER = '\x00';
  * safe to use as a delimiter.
  */
 std::string EncodeBase255(uint64_t id);
-uint64_t DecodeBase255(std::string_view s);
+std::optional<uint64_t> DecodeBase255(std::string_view s);
 
 } // namespace EloqKV

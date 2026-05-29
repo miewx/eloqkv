@@ -2824,10 +2824,9 @@ std::vector<std::string> RedisServiceImpl::ScanGCRecords()
     }
 
     uint64_t scan_alias = scan_open.Result();
-    size_t current_index = 0;
     size_t plan_size = save_point.PlanSize();
 
-    if (current_index < plan_size)
+    for (size_t current_index = 0; current_index < plan_size; ++current_index)
     {
         txservice::BucketScanPlan plan = save_point.PickPlan(current_index);
         std::vector<txservice::ScanBatchTuple> scan_batch;
@@ -2844,14 +2843,17 @@ std::vector<std::string> RedisServiceImpl::ScanGCRecords()
         txm->Execute(&scan_batch_req);
         scan_batch_req.Wait();
 
-        if (!scan_batch_req.IsError())
+        if (scan_batch_req.IsError())
         {
-            for (const auto &tuple : scan_batch)
+            txservice::AbortTx(txm);
+            return {};
+        }
+
+        for (const auto &tuple : scan_batch)
+        {
+            if (tuple.status_ == txservice::RecordStatus::Normal)
             {
-                if (tuple.status_ == txservice::RecordStatus::Normal)
-                {
-                    gc_records.push_back(tuple.key_.ToString());
-                }
+                gc_records.push_back(tuple.key_.ToString());
             }
         }
     }
@@ -2947,14 +2949,14 @@ bool RedisServiceImpl::CleanPrefixKeys(const std::string& old_prefix)
         }
 
         uint64_t scan_alias = scan_open.Result();
-        size_t current_index = 0;
         size_t plan_size = save_point.PlanSize();
-        std::vector<txservice::ScanBatchTuple> scan_batch;
-
         std::vector<std::string> keys_to_delete;
-        if (current_index < plan_size)
+        bool scan_success = true;
+
+        for (size_t current_index = 0; current_index < plan_size; ++current_index)
         {
             txservice::BucketScanPlan plan = save_point.PickPlan(current_index);
+            std::vector<txservice::ScanBatchTuple> scan_batch;
             ScanBatchTxRequest scan_batch_req(
                 scan_alias,
                 table_name,
@@ -2969,8 +2971,8 @@ bool RedisServiceImpl::CleanPrefixKeys(const std::string& old_prefix)
             scan_batch_req.Wait();
             if (scan_batch_req.IsError())
             {
-                txservice::AbortTx(txm);
-                return false;
+                scan_success = false;
+                break;
             }
 
             for (const auto &tuple : scan_batch)
@@ -2980,6 +2982,12 @@ bool RedisServiceImpl::CleanPrefixKeys(const std::string& old_prefix)
                     keys_to_delete.push_back(tuple.key_.ToString());
                 }
             }
+        }
+
+        if (!scan_success)
+        {
+            txservice::AbortTx(txm);
+            return false;
         }
 
         txservice::AbortTx(txm);
@@ -6225,8 +6233,18 @@ brpc::RedisCommandHandlerResult RedisServiceImpl::DispatchCommand(
 
     if (ctx->ns_meta)
     {
-        uint64_t epoch = ctx->ns_meta->epoch.load(std::memory_order_relaxed);
-        ctx->ns_id = NamespacePrefix::MakePrefix(ctx->ns_meta->encoded_id, epoch);
+        auto live_meta = namespace_manager_.GetMetadataByToken(ctx->ns_meta->token);
+        if (live_meta && live_meta == ctx->ns_meta)
+        {
+            uint64_t epoch = live_meta->epoch.load(std::memory_order_relaxed);
+            ctx->ns_id = NamespacePrefix::MakePrefix(live_meta->encoded_id, epoch);
+        }
+        else
+        {
+            ctx->ns = "default";
+            ctx->ns_id = "";
+            ctx->ns_meta = nullptr;
+        }
     }
     else if (ctx->ns == "default")
     {
