@@ -40,15 +40,8 @@ bool NamespaceManager::Add(std::string_view ns, std::string_view token)
     }
     token_to_ns_.emplace(token, ns);
     ns_to_token_.emplace(ns, token);
-    if (ns == "default")
-    {
-        ns_to_id_.emplace(ns, std::string{'\x01', B255_DELIMITER});
-    }
-    else
-    {
-        uint64_t id = ++next_id_;
-        ns_to_id_.emplace(ns, EncodeBase255(id) + std::string{B255_DELIMITER});
-    }
+    uint64_t id = ++next_id_;
+    ns_to_id_.emplace(ns, EncodeBase255(id) + std::string{B255_DELIMITER});
     return true;
 }
 
@@ -81,15 +74,8 @@ bool NamespaceManager::Set(std::string_view ns, std::string_view token)
 
     token_to_ns_.emplace(token, ns);
     ns_to_token_.emplace(ns, token);
-    if (ns == "default")
-    {
-        ns_to_id_.emplace(ns, std::string{'\x01', B255_DELIMITER});
-    }
-    else
-    {
-        uint64_t id = ++next_id_;
-        ns_to_id_.emplace(ns, EncodeBase255(id) + std::string{B255_DELIMITER});
-    }
+    uint64_t id = ++next_id_;
+    ns_to_id_.emplace(ns, EncodeBase255(id) + std::string{B255_DELIMITER});
     return true;
 }
 

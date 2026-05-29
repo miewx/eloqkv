@@ -1504,7 +1504,7 @@ void AuthCommand::Execute(RedisServiceImpl *redis_impl,
         result_.err_code_ = RD_OK;
         ctx->authenticated = true;
         ctx->ns = "default";
-        ctx->ns_id = EncodeBase255(0) + std::string(1, B255_DELIMITER);
+        ctx->ns_id = "";
     }
     else
     {
@@ -2275,11 +2275,8 @@ void DBSizeCommand::Execute(RedisServiceImpl *redis_impl,
         }
         uint64_t schema_version = catalog_rec.SchemaTs();
 
-        std::string old_ns_temp = std::move(current_namespace);
-        current_namespace = "";
-        EloqKey start_key(ns_prefix);
-        EloqKey end_key(ns_prefix_next);
-        current_namespace = std::move(old_ns_temp);
+        EloqKey start_key(ns_prefix, false);
+        EloqKey end_key(ns_prefix_next, false);
 
         TxKey start_tx_key(&start_key);
         TxKey end_tx_key(&end_key);
