@@ -357,6 +357,7 @@ SET(RESELOQ_RESOURCES
     src/lua_interpreter.cpp
     src/pub_sub_manager.cpp
     src/namespace/manager.cpp
+    src/namespace/token.cpp
     src/namespace/storage.cpp
     src/namespace/gc.cpp
     src/namespace/context.cpp

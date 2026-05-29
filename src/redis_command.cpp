@@ -20,6 +20,7 @@
  *
  */
 #include "redis_command.h"
+#include "namespace/token.h"
 #include <openssl/rand.h>
 
 #include <brpc/acceptor.h>
@@ -1525,27 +1526,8 @@ void AuthCommand::OutputResult(OutputHandler *reply) const
         assert(result_.err_code_ == RD_ERR_WRONG_PASS);
         reply->OnError(redis_get_error_messages(RD_ERR_WRONG_PASS));
     }
-}
-static NamespaceToken GenerateRandomToken()
-{
-    NamespaceToken token;
-    if (RAND_bytes(token.bytes, 16) != 1)
-    {
-        std::random_device rd;
-        for (size_t i = 0; i < 4; ++i)
-        {
-            uint32_t val = rd();
-            std::memcpy(&token.bytes[i * 4], &val, 4);
-        }
-    }
 
-    // Format as UUID Version 4
-    token.bytes[6] = (token.bytes[6] & 0x0f) | 0x40; // Set version to 4
-    token.bytes[8] = (token.bytes[8] & 0x3f) | 0x80; // Set variant to RFC 4122
-    token.valid = true;
 
-    return token;
-}
 
 void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
                                RedisConnectionContext *ctx)
