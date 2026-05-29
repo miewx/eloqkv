@@ -148,12 +148,12 @@ async function run() {
       let gciCmd = "";
 
       if (commandExists("gci")) {
-        useGci = true;
+        useGci = false;
         gciCmd = "gci";
       } else {
         try {
           fs.accessSync(gciPath, fs.constants.X_OK);
-          useGci = true;
+          useGci = false;
           gciCmd = gciPath;
         } catch (e) {}
       }
