@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
-import { $ } from "zx";
+import { $, cd } from "zx";
 import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
 
 // 1. Ensure we are in the repository root directory
-const repoRoot = import.meta.dir || import.meta.dirname || process.cwd();
-process.chdir(repoRoot);
+const repoRoot = import.meta.dirname;
+cd(repoRoot);
 
 // Helper to check if a command exists in PATH
 function commandExists(cmd) {
@@ -73,7 +73,8 @@ async function run() {
     await $`git worktree add ${tempDir} ${pureBranch}`;
 
     // 4. 获取当前工作区存在的所有文件
-    const workspaceFilesOutput = await $`git -c core.quotePath=false ls-files --cached --others --exclude-standard`;
+    const workspaceFilesOutput =
+      await $`git -c core.quotePath=false ls-files --cached --others --exclude-standard`;
     const workspaceFiles = new Set();
     for (const line of workspaceFilesOutput.stdout.split("\n")) {
       const file = line.trim();
@@ -86,8 +87,8 @@ async function run() {
     const pureFilesOutput = await $`git -c core.quotePath=false -C ${tempDir} ls-files`;
     const pureFiles = pureFilesOutput.stdout
       .split("\n")
-      .map(line => line.trim())
-      .filter(line => line.length > 0);
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
 
     // 6. 删除不存在于当前工作区但存在于 pure 分支的文件
     console.log("清理临时工作区中多余/已删除的文件...");
@@ -103,21 +104,22 @@ async function run() {
 
     // 7. 从当前工作目录复制最新匹配文件到临时工作区
     console.log("正在复制最新的代码文件...");
-    const filesToCopyOutput = await $`git -c core.quotePath=false ls-files --cached --others --exclude-standard -- '*.[ch]' '*.hpp' '*.cpp' '*.ini' '*.txt'`;
+    const filesToCopyOutput =
+      await $`git -c core.quotePath=false ls-files --cached --others --exclude-standard -- '*.[ch]' '*.hpp' '*.cpp' '*.ini' '*.txt'`;
     const filesToCopy = filesToCopyOutput.stdout
       .split("\n")
-      .map(line => line.trim())
-      .filter(line => line.length > 0);
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
 
     for (const file of filesToCopy) {
       const srcPath = path.join(repoRoot, file);
       const destPath = path.join(tempDir, file);
-      
+
       const destDir = path.dirname(destPath);
       if (!fs.existsSync(destDir)) {
         fs.mkdirSync(destDir, { recursive: true });
       }
-      
+
       fs.copyFileSync(srcPath, destPath);
     }
 
@@ -138,7 +140,7 @@ async function run() {
       fs.writeFileSync(".no_changes", "");
     } else {
       console.log("正在基于代码提交更改...");
-      
+
       let gciPath = "/Users/z/.bin/gci";
       let useGci = false;
       let gciCmd = "";
@@ -179,7 +181,6 @@ async function run() {
         process.exit(1);
       }
     }
-
   } finally {
     // 确保清理临时工作区
     if (tempDir && fs.existsSync(tempDir)) {
@@ -196,7 +197,7 @@ async function run() {
   }
 }
 
-run().catch(err => {
+run().catch((err) => {
   console.error("运行过程中发生错误:", err);
   process.exit(1);
 });
