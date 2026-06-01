@@ -2,13 +2,13 @@
 
 #include <string>
 #include <string_view>
-#include "b255_encode.h"
+#include "b255.h"
 
 namespace EloqKV
 {
 namespace NamespacePrefix
 {
-    constexpr char B255_DELIMITER = '\x00';
+    constexpr char B255_DELIMITER = ':';
 
     // Construct prefix: encoded_ns_id + B255_DELIMITER + encoded_epoch + B255_DELIMITER
     inline std::string MakePrefix(std::string_view encoded_ns_id, uint64_t epoch)
@@ -17,7 +17,7 @@ namespace NamespacePrefix
         prefix.reserve(encoded_ns_id.size() + 1 + 8 + 1);
         prefix.append(encoded_ns_id);
         prefix.push_back(B255_DELIMITER);
-        prefix.append(EncodeBase255(epoch));
+        prefix.append(B255e(epoch));
         prefix.push_back(B255_DELIMITER);
         return prefix;
     }
@@ -34,7 +34,7 @@ namespace NamespacePrefix
         if (delim2 == std::string_view::npos || delim2 <= epoch_start) return false;
 
         std::string_view encoded_epoch = full_key.substr(epoch_start, delim2 - epoch_start);
-        auto decoded_epoch = DecodeBase255(encoded_epoch);
+        auto decoded_epoch = B255d(encoded_epoch);
         if (!decoded_epoch.has_value()) return false;
 
         ns_id = full_key.substr(ns_start, delim1 - ns_start);

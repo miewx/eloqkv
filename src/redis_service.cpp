@@ -59,7 +59,7 @@
 #include "data_substrate.h"
 #include "eloq_metrics/include/metrics.h"
 #include "eloqkv_key.h"
-#include "b255_encode.h"
+#include "b255.h"
 #include "error_messages.h"
 #include "kv_store.h"
 #include "lua_interpreter.h"

@@ -1,6 +1,6 @@
 #include "namespace/manager.h"
 
-#include "b255_encode.h"
+#include "b255.h"
 #include "token.h"
 
 namespace EloqKV
@@ -30,7 +30,7 @@ bool MemoryNamespaceStorage::Add(std::string_view ns,
             new_state.ns_to_token.emplace(ns, token);
             uint64_t id = ++new_state.next_id;
             new_state.ns_to_id.emplace(
-                ns, EncodeBase255(id) + std::string{B255_DELIMITER});
+                ns, B255e(id) + std::string{B255_DELIMITER});
             return true;
         });
 }
@@ -65,7 +65,7 @@ bool MemoryNamespaceStorage::Set(std::string_view ns,
             new_state.ns_to_token.emplace(ns, token);
             uint64_t id = ++new_state.next_id;
             new_state.ns_to_id.emplace(
-                ns, EncodeBase255(id) + std::string{B255_DELIMITER});
+                ns, B255e(id) + std::string{B255_DELIMITER});
             return true;
         });
 }

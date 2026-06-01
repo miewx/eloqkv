@@ -35,22 +35,22 @@
   - **默认命名空间（`default`）**：默认情况下，默认命名空间的数据是**无前缀的（prefixless）**，保持原生的 Key 编码。其数据直接路由至原有的物理数据库表（如 `data_table_0`, `data_table_1` 等）。
   - **自定义命名空间**：所有自定义命名空间共享单个物理表 `ns_data_0`。
     - 各自定义命名空间在 `ns_data_0` 内使用独特的 Base-255 编码前缀实现前缀隔离。
-    - **自定义命名空间 Key 前缀格式**：
+    - **自定义命名空间 Key 前缀格式** —
       ```
-      Key Prefix = encoded_ns_id + Delimiter (\x00) + encoded_epoch + Delimiter (\x00)
+      Key Prefix = encoded_ns_id + Delimiter (:) + encoded_epoch + Delimiter (:)
       ```
 
       ```mermaid
       graph TD
-          NS_ID["encoded_ns_id (Base-255 string)"] --> DELIM1["Delimiter (1B: \\x00)"]
+          NS_ID["encoded_ns_id (Base-255 string)"] --> DELIM1["Delimiter (1B, :)"]
           DELIM1 --> EPOCH["encoded_epoch (Base-255 string)"]
-          EPOCH --> DELIM2["Delimiter (1B: \\x00)"]
+          EPOCH --> DELIM2["Delimiter (1B, :)"]
           DELIM2 --> USER_KEY["User Key (raw string)"]
       ```
 
-      - **`encoded_ns_id`**：租户 Namespace ID 经过 Base-255 编码后的字符串。由于 Base-255 编码排除了 `\x00` 字符，因此 `\x00` 可以安全作为分隔符。
-      - **`encoded_epoch`**：当前命名空间的 epoch（清除版本号），同样使用 Base-255 编码。
-    - 由于 `\x00` 作为前缀分隔符且与数据内容完全隔离，保证了各个命名空间 Key 之间的无碰撞与安全隔离。
+      - **`encoded_ns_id`** — 租户 Namespace ID 经过 Base-255 编码后的字符串。由于 Base-255 编码排除了 `:` 字符，因此 `:` 可以安全作为分隔符。
+      - **`encoded_epoch`** — 当前命名空间的 epoch（清除版本号），同样使用 Base-255 编码。
+    - 由于 `:` 作为前缀分隔符且与数据内容完全隔离，保证了各个命名空间 Key 之间的无碰撞与安全隔离。
 - **透明包装**：
   - `EloqKey` 在构造时通过 `CreateEloqStringFromNamespace` 透明地加上当前的命名空间前缀（对于默认命名空间不加前缀）。
 - **范围限制与上限边界计算 (`ComposeNamespaceKeyNext`)**：
@@ -60,31 +60,31 @@
 ### 1.3 核心实现代码说明
 
 ```cpp
-// 1. Base-255 编码与解码实现 (include/b255_encode.h / src/b255_encode.cpp)
-// 将数字 ID 转换为不含 \x00 字符的 Base-255 字符串
-std::string EncodeBase255(uint64_t id)
+// 1. Base-255 编码与解码实现 (include/b255.h / src/b255.cpp)
+// 将数字 ID 转换为不含 : 字符的 Base-255 字符串
+std::string B255e(uint64_t id)
 {
     if (id == 0)
     {
-        return std::string(1, '\x01');
+        return std::string(1, '\x00');
     }
-    std::string result;
+    const unsigned char delim = static_cast<unsigned char>(B255_DELIMITER);
+    char buf[9];
+    int pos = 9;
     uint64_t temp = id;
     while (temp > 0)
     {
         uint64_t digit = temp % 255;
-        char c = static_cast<char>(digit + 1); // 加上偏移避开 \x00
-        result.push_back(c);
+        buf[--pos] = static_cast<char>(digit < delim ? digit : digit + 1);
         temp /= 255;
     }
-    std::reverse(result.begin(), result.end());
-    return result;
+    return std::string(buf + pos, 9 - pos);
 }
 
 // 2. 命名空间 Key 前缀构造 (include/namespace/prefix.h)
 namespace NamespacePrefix
 {
-    constexpr char B255_DELIMITER = '\x00';
+    constexpr char B255_DELIMITER = ':';
 
     inline std::string MakePrefix(std::string_view encoded_ns_id, uint64_t epoch)
     {
@@ -92,7 +92,7 @@ namespace NamespacePrefix
         prefix.reserve(encoded_ns_id.size() + 1 + 8 + 1);
         prefix.append(encoded_ns_id);
         prefix.push_back(B255_DELIMITER);
-        prefix.append(EncodeBase255(epoch));
+        prefix.append(B255e(epoch));
         prefix.push_back(B255_DELIMITER);
         return prefix;
     }

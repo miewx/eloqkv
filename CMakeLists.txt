@@ -361,7 +361,7 @@ SET(RESELOQ_RESOURCES
     src/namespace/storage.cpp
     src/namespace/gc.cpp
     src/namespace/context.cpp
-    src/b255_encode.cpp
+    src/b255.cpp
     src/redis_service.cpp
     src/redis_command.cpp
     src/redis_object.cpp

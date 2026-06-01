@@ -37,7 +37,7 @@
 #include "redis_handler.h"
 #include "redis_object.h"
 #include "redis_stats.h"
-#include "b255_encode.h"
+#include "b255.h"
 #include "namespace/manager.h"
 #include "namespace/context.h"
 

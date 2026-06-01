@@ -3,7 +3,7 @@
 #include "redis_service.h"
 #include "redis_command.h"
 #include "eloqkv_key.h"
-#include "b255_encode.h"
+#include "b255.h"
 #include "tx_execution.h"
 #include "tx_request.h"
 #include "tx_util.h"

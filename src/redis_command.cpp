@@ -57,7 +57,7 @@
 #include "eloq_string.h"
 #include "eloqkv_catalog_factory.h"
 #include "eloqkv_key.h"
-#include "b255_encode.h"
+#include "b255.h"
 #include "local_cc_shards.h"
 #include "output_handler.h"
 #include "redis/server.h"
