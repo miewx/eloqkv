@@ -62,7 +62,7 @@
 ```cpp
 // 1. Base-255 编码与解码实现 (include/b255.h / src/b255.cpp)
 // 将数字 ID 转换为不含 : 字符的 Base-255 字符串
-std::string B255e(uint64_t id)
+std::string b255e(uint64_t id)
 {
     if (id == 0)
     {
@@ -92,7 +92,7 @@ namespace NamespacePrefix
         prefix.reserve(encoded_ns_id.size() + 1 + 8 + 1);
         prefix.append(encoded_ns_id);
         prefix.push_back(B255_DELIMITER);
-        prefix.append(B255e(epoch));
+        prefix.append(b255e(epoch));
         prefix.push_back(B255_DELIMITER);
         return prefix;
     }

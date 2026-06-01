@@ -186,7 +186,7 @@ bool NamespaceStorage::Add(std::string_view ns, const NamespaceToken &token)
 
     uint64_t id = next_id;
     std::string new_next_id_val = std::to_string(next_id + 1);
-    std::string encoded_id = B255e(id);
+    std::string encoded_id = b255e(id);
 
     SetCommand cmd_set_id(new_next_id_val);
     ObjectCommandTxRequest tx_req_set_id(server_->NamespaceTableName(), &next_id_key, &cmd_set_id, /*auto_commit=*/false, /*always_redirect=*/true, txm);
@@ -382,7 +382,7 @@ bool NamespaceStorage::Set(std::string_view ns, const NamespaceToken &token)
 
         uint64_t id = next_id;
         std::string new_next_id_val = std::to_string(next_id + 1);
-        encoded_id = B255e(id);
+        encoded_id = b255e(id);
 
         cmd_set_id = std::make_unique<SetCommand>(new_next_id_val);
         tx_req_set_id = std::make_unique<ObjectCommandTxRequest>(server_->NamespaceTableName(), next_id_key.get(), cmd_set_id.get(), /*auto_commit=*/false, /*always_redirect=*/true, txm);

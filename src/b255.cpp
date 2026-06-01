@@ -8,7 +8,7 @@
 namespace EloqKV
 {
 
-std::string B255e(uint64_t id)
+std::string b255e(uint64_t id)
 {
     if (id == 0)
     {
@@ -27,7 +27,7 @@ std::string B255e(uint64_t id)
     return std::string(buf + pos, 9 - pos);
 }
 
-std::optional<uint64_t> B255d(std::string_view s)
+std::optional<uint64_t> b255d(std::string_view s)
 {
     if (s.empty() || s.size() > 9)
     {

@@ -15,7 +15,7 @@ constexpr char B255_DELIMITER = ':';
  * This guarantees the encoded string does not contain the delimiter (:), making :
  * safe to use as a delimiter.
  */
-std::string B255e(uint64_t id);
-std::optional<uint64_t> B255d(std::string_view s);
+std::string b255e(uint64_t id);
+std::optional<uint64_t> b255d(std::string_view s);
 
 } // namespace EloqKV
