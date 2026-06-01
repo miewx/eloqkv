@@ -30,7 +30,7 @@ bool MemoryNamespaceStorage::Add(std::string_view ns,
             new_state.ns_to_token.emplace(ns, token);
             uint64_t id = ++new_state.next_id;
             new_state.ns_to_id.emplace(
-                ns, b255e(id) + std::string{B255_DELIMITER});
+                ns, b255prefix(id));
             return true;
         });
 }
@@ -65,7 +65,7 @@ bool MemoryNamespaceStorage::Set(std::string_view ns,
             new_state.ns_to_token.emplace(ns, token);
             uint64_t id = ++new_state.next_id;
             new_state.ns_to_id.emplace(
-                ns, b255e(id) + std::string{B255_DELIMITER});
+                ns, b255prefix(id));
             return true;
         });
 }

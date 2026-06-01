@@ -27,6 +27,11 @@ std::string b255e(uint64_t id)
     return std::string(buf + pos, 9 - pos);
 }
 
+std::string b255prefix(uint64_t id)
+{
+    return b255e(id) + B255_DELIMITER;
+}
+
 std::optional<uint64_t> b255d(std::string_view s)
 {
     if (s.empty() || s.size() > 9)

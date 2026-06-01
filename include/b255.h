@@ -16,6 +16,7 @@ constexpr char B255_DELIMITER = ':';
  * safe to use as a delimiter.
  */
 std::string b255e(uint64_t id);
+std::string b255prefix(uint64_t id);
 std::optional<uint64_t> b255d(std::string_view s);
 
 } // namespace EloqKV
