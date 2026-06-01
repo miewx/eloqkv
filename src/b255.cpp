@@ -1,6 +1,7 @@
 #include "b255.h"
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string_view>
 

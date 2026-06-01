@@ -1,14 +1,16 @@
 #include "namespace/gc.h"
-#include "namespace/storage.h"
-#include "redis_service.h"
-#include "redis_command.h"
-#include "eloqkv_key.h"
+
+#include <glog/logging.h>
+
 #include "b255.h"
+#include "eloqkv_key.h"
+#include "namespace/prefix.h"
+#include "namespace/storage.h"
+#include "redis_command.h"
+#include "redis_service.h"
 #include "tx_execution.h"
 #include "tx_request.h"
 #include "tx_util.h"
-#include <glog/logging.h>
-#include "namespace/prefix.h"
 
 namespace EloqKV
 {
@@ -30,9 +32,9 @@ void NamespaceGc::Stop()
     }
 }
 
-void* NamespaceGc::DaemonRoutine(void* arg)
+void *NamespaceGc::DaemonRoutine(void *arg)
 {
-    NamespaceGc* gc = static_cast<NamespaceGc*>(arg);
+    NamespaceGc *gc = static_cast<NamespaceGc *>(arg);
     gc->RunDaemon();
     return nullptr;
 }
@@ -56,12 +58,12 @@ void NamespaceGc::RunDaemon()
                 {
                     break;
                 }
-                bthread_usleep(100 * 1000); // 100ms
+                bthread_usleep(100 * 1000);  // 100ms
             }
             continue;
         }
 
-        for (const auto& gc_key : gc_records)
+        for (const auto &gc_key : gc_records)
         {
             if (server_->IsStopping())
             {
@@ -87,17 +89,16 @@ void NamespaceGc::RunDaemon()
                 continue;
             }
 
-            std::string old_prefix = NamespacePrefix::MakePrefix(encoded_ns_id, epoch);
-            LOG(INFO) << "Namespace GC: cleaning prefix " << old_prefix << " (record: " << gc_key << ")";
+            std::string old_prefix =
+                NamespacePrefix::MakePrefix(encoded_ns_id, epoch);
 
             bool cleanup_complete = CleanPrefixKeys(old_prefix);
             if (cleanup_complete)
             {
                 DeleteGCRecord(gc_key);
-                LOG(INFO) << "Namespace GC: completed cleaning prefix " << old_prefix;
             }
 
-            bthread_usleep(10 * 1000); // 10ms
+            bthread_usleep(10 * 1000);  // 10ms
         }
     }
     LOG(INFO) << "Namespace GC daemon stopped.";
@@ -106,7 +107,8 @@ void NamespaceGc::RunDaemon()
 std::vector<std::string> NamespaceGc::ScanGCRecords()
 {
     std::vector<std::string> gc_records;
-    TransactionExecution *txm = server_->NewTxm(IsolationLevel::ReadCommitted, CcProtocol::OccRead);
+    TransactionExecution *txm =
+        server_->NewTxm(IsolationLevel::ReadCommitted, CcProtocol::OccRead);
     if (txm == nullptr)
     {
         return {};
@@ -146,29 +148,28 @@ std::vector<std::string> NamespaceGc::ScanGCRecords()
     TxKey end_tx_key(&end_key);
 
     txservice::BucketScanSavePoint save_point;
-    ScanOpenTxRequest scan_open(
-        &table_name,
-        schema_version,
-        ScanIndexType::Primary,
-        &start_tx_key,
-        true,
-        &end_tx_key,
-        false,
-        ScanDirection::Forward,
-        false,
-        false,
-        false,
-        false,
-        true,
-        false,
-        true,
-        false,
-        nullptr,
-        nullptr,
-        txm,
-        -1,
-        "",
-        &save_point);
+    ScanOpenTxRequest scan_open(&table_name,
+                                schema_version,
+                                ScanIndexType::Primary,
+                                &start_tx_key,
+                                true,
+                                &end_tx_key,
+                                false,
+                                ScanDirection::Forward,
+                                false,
+                                false,
+                                false,
+                                false,
+                                true,
+                                false,
+                                true,
+                                false,
+                                nullptr,
+                                nullptr,
+                                txm,
+                                -1,
+                                "",
+                                &save_point);
 
     txm->Execute(&scan_open);
     scan_open.Wait();
@@ -185,16 +186,15 @@ std::vector<std::string> NamespaceGc::ScanGCRecords()
     {
         txservice::BucketScanPlan plan = save_point.PickPlan(current_index);
         std::vector<txservice::ScanBatchTuple> scan_batch;
-        ScanBatchTxRequest scan_batch_req(
-            scan_alias,
-            table_name,
-            &scan_batch,
-            nullptr,
-            nullptr,
-            txm,
-            -1,
-            "",
-            &plan);
+        ScanBatchTxRequest scan_batch_req(scan_alias,
+                                          table_name,
+                                          &scan_batch,
+                                          nullptr,
+                                          nullptr,
+                                          txm,
+                                          -1,
+                                          "",
+                                          &plan);
         txm->Execute(&scan_batch_req);
         scan_batch_req.Wait();
 
@@ -217,7 +217,7 @@ std::vector<std::string> NamespaceGc::ScanGCRecords()
     return gc_records;
 }
 
-bool NamespaceGc::CleanPrefixKeys(const std::string& old_prefix)
+bool NamespaceGc::CleanPrefixKeys(const std::string &old_prefix)
 {
     std::string old_prefix_next = NamespacePrefix::MakePrefixNext(old_prefix);
     const TableName &table_name = *(server_->NsDataTableName());
@@ -229,7 +229,8 @@ bool NamespaceGc::CleanPrefixKeys(const std::string& old_prefix)
             return false;
         }
 
-        TransactionExecution *txm = server_->NewTxm(IsolationLevel::ReadCommitted, CcProtocol::OccRead);
+        TransactionExecution *txm =
+            server_->NewTxm(IsolationLevel::ReadCommitted, CcProtocol::OccRead);
         if (txm == nullptr)
         {
             bthread_usleep(100 * 1000);
@@ -270,29 +271,28 @@ bool NamespaceGc::CleanPrefixKeys(const std::string& old_prefix)
         TxKey end_tx_key(&end_key);
 
         txservice::BucketScanSavePoint save_point;
-        ScanOpenTxRequest scan_open(
-            &table_name,
-            schema_version,
-            ScanIndexType::Primary,
-            &start_tx_key,
-            true,
-            &end_tx_key,
-            false,
-            ScanDirection::Forward,
-            false,
-            false,
-            false,
-            false,
-            true,
-            false,
-            true,
-            false,
-            nullptr,
-            nullptr,
-            txm,
-            -1,
-            "",
-            &save_point);
+        ScanOpenTxRequest scan_open(&table_name,
+                                    schema_version,
+                                    ScanIndexType::Primary,
+                                    &start_tx_key,
+                                    true,
+                                    &end_tx_key,
+                                    false,
+                                    ScanDirection::Forward,
+                                    false,
+                                    false,
+                                    false,
+                                    false,
+                                    true,
+                                    false,
+                                    true,
+                                    false,
+                                    nullptr,
+                                    nullptr,
+                                    txm,
+                                    -1,
+                                    "",
+                                    &save_point);
 
         txm->Execute(&scan_open);
         scan_open.Wait();
@@ -308,20 +308,20 @@ bool NamespaceGc::CleanPrefixKeys(const std::string& old_prefix)
         std::vector<std::string> keys_to_delete;
         bool scan_success = true;
 
-        for (size_t current_index = 0; current_index < plan_size; ++current_index)
+        for (size_t current_index = 0; current_index < plan_size;
+             ++current_index)
         {
             txservice::BucketScanPlan plan = save_point.PickPlan(current_index);
             std::vector<txservice::ScanBatchTuple> scan_batch;
-            ScanBatchTxRequest scan_batch_req(
-                scan_alias,
-                table_name,
-                &scan_batch,
-                nullptr,
-                nullptr,
-                txm,
-                -1,
-                "",
-                &plan);
+            ScanBatchTxRequest scan_batch_req(scan_alias,
+                                              table_name,
+                                              &scan_batch,
+                                              nullptr,
+                                              nullptr,
+                                              txm,
+                                              -1,
+                                              "",
+                                              &plan);
             txm->Execute(&scan_batch_req);
             scan_batch_req.Wait();
             if (scan_batch_req.IsError())
@@ -352,7 +352,8 @@ bool NamespaceGc::CleanPrefixKeys(const std::string& old_prefix)
             return true;
         }
 
-        TransactionExecution *txm_del = server_->NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
+        TransactionExecution *txm_del = server_->NewTxm(
+            IsolationLevel::RepeatableRead, CcProtocol::Locking);
         if (txm_del == nullptr)
         {
             bthread_usleep(100 * 1000);
@@ -372,8 +373,12 @@ bool NamespaceGc::CleanPrefixKeys(const std::string& old_prefix)
             auto key_obj = std::make_unique<EloqKey>(EloqKey::Raw(k));
             auto del_cmd = std::make_unique<DelCommand>();
             auto del_req = std::make_unique<ObjectCommandTxRequest>(
-                &table_name, key_obj.get(), del_cmd.get(),
-                /*auto_commit=*/false, /*always_redirect=*/true, txm_del);
+                &table_name,
+                key_obj.get(),
+                del_cmd.get(),
+                /*auto_commit=*/false,
+                /*always_redirect=*/true,
+                txm_del);
 
             txm_del->Execute(del_req.get());
             del_req->Wait();
@@ -405,14 +410,21 @@ bool NamespaceGc::CleanPrefixKeys(const std::string& old_prefix)
     }
 }
 
-void NamespaceGc::DeleteGCRecord(const std::string& gc_key)
+void NamespaceGc::DeleteGCRecord(const std::string &gc_key)
 {
-    TransactionExecution *txm = server_->NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
-    if (txm == nullptr) return;
+    TransactionExecution *txm =
+        server_->NewTxm(IsolationLevel::RepeatableRead, CcProtocol::Locking);
+    if (txm == nullptr)
+        return;
 
     EloqKey key_obj = EloqKey::Raw(gc_key);
     DelCommand del_cmd;
-    ObjectCommandTxRequest del_req(server_->NamespaceTableName(), &key_obj, &del_cmd, /*auto_commit=*/false, /*always_redirect=*/true, txm);
+    ObjectCommandTxRequest del_req(server_->NamespaceTableName(),
+                                   &key_obj,
+                                   &del_cmd,
+                                   /*auto_commit=*/false,
+                                   /*always_redirect=*/true,
+                                   txm);
 
     txm->Execute(&del_req);
     del_req.Wait();
