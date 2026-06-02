@@ -14,6 +14,7 @@ namespace EloqKV
 {
 
 
+
 struct NamespaceMetadata
 {
     std::string ns_name;
