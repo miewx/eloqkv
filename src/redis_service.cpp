@@ -822,14 +822,12 @@ struct NsFlushArgs
     std::string ns;
     std::string requirepass;
     bool enable_tls;
+    std::vector<std::string> peer_endpoints;
 };
 
 static void *DoBroadcastNsFlush(void *arg)
 {
     std::unique_ptr<NsFlushArgs> args(static_cast<NsFlushArgs *>(arg));
-    auto node_id = txservice::Sharder::Instance().NodeId();
-    auto ng_configs = txservice::Sharder::Instance().GetNodeGroupConfigs();
-    std::unordered_set<uint32_t> visited_nodes;
 
     std::vector<std::unique_ptr<brpc::Channel>> channels;
     std::vector<std::string> peer_endpoints;
@@ -837,81 +835,60 @@ static void *DoBroadcastNsFlush(void *arg)
     std::vector<std::unique_ptr<brpc::RedisRequest>> requests;
     std::vector<std::unique_ptr<brpc::RedisResponse>> responses;
 
-    size_t max_nodes = 0;
-    for (const auto &[ng_id, nodes] : ng_configs)
-    {
-        max_nodes += nodes.size();
-    }
-    channels.reserve(max_nodes);
-    peer_endpoints.reserve(max_nodes);
-    controllers.reserve(max_nodes);
-    requests.reserve(max_nodes);
-    responses.reserve(max_nodes);
+    size_t num_peers = args->peer_endpoints.size();
+    channels.reserve(num_peers);
+    peer_endpoints.reserve(num_peers);
+    controllers.reserve(num_peers);
+    requests.reserve(num_peers);
+    responses.reserve(num_peers);
 
-    for (const auto &[ng_id, nodes] : ng_configs)
+    for (const auto &endpoint : args->peer_endpoints)
     {
-        for (const auto &node : nodes)
+        auto channel = std::make_unique<brpc::Channel>();
+        brpc::ChannelOptions options;
+        options.protocol = brpc::PROTOCOL_REDIS;
+        options.timeout_ms = 500;
+        if (args->enable_tls)
         {
-            if (node.node_id_ == node_id)
-            {
-                continue;  // Skip self
-            }
-            if (visited_nodes.count(node.node_id_))
-            {
-                continue;  // Skip already visited node
-            }
-            visited_nodes.insert(node.node_id_);
+            options.mutable_ssl_options();
+        }
 
-            auto channel = std::make_unique<brpc::Channel>();
-            brpc::ChannelOptions options;
-            options.protocol = brpc::PROTOCOL_REDIS;
-            options.timeout_ms = 500;
-            if (args->enable_tls)
+        if (channel->Init(endpoint.c_str(), &options) == 0)
+        {
+            auto request = std::make_unique<brpc::RedisRequest>();
+            butil::StringPiece components[4];
+            components[0] = "NAMESPACE";
+            components[1] = NamespaceCommand::kOpNsFlush;
+            components[2] = args->ns;
+            size_t num_components = 3;
+            if (!args->requirepass.empty())
             {
-                options.mutable_ssl_options();
+                components[3] = args->requirepass;
+                num_components = 4;
             }
 
-            std::string endpoint =
-                node.host_name_ + ":" +
-                std::to_string(RedisServiceImpl::TxPortToRedisPort(node.port_));
-
-            if (channel->Init(endpoint.c_str(), &options) == 0)
+            if (request->AddCommandByComponents(components, num_components))
             {
-                auto request = std::make_unique<brpc::RedisRequest>();
-                butil::StringPiece components[4];
-                components[0] = "NAMESPACE";
-                components[1] = NamespaceCommand::kOpNsFlush;
-                components[2] = args->ns;
-                size_t num_components = 3;
-                if (!args->requirepass.empty())
-                {
-                    components[3] = args->requirepass;
-                    num_components = 4;
-                }
+                auto controller = std::make_unique<brpc::Controller>();
+                auto response = std::make_unique<brpc::RedisResponse>();
 
-                if (request->AddCommandByComponents(components, num_components))
-                {
-                    auto controller = std::make_unique<brpc::Controller>();
-                    auto response = std::make_unique<brpc::RedisResponse>();
+                channel->CallMethod(NULL,
+                                    controller.get(),
+                                    request.get(),
+                                    response.get(),
+                                    brpc::DoNothing());
 
-                    channel->CallMethod(NULL,
-                                        controller.get(),
-                                        request.get(),
-                                        response.get(),
-                                        brpc::DoNothing());
-
-                    channels.push_back(std::move(channel));
-                    peer_endpoints.push_back(endpoint);
-                    controllers.push_back(std::move(controller));
-                    requests.push_back(std::move(request));
-                    responses.push_back(std::move(response));
-                }
+                channels.push_back(std::move(channel));
+                peer_endpoints.push_back(endpoint);
+                controllers.push_back(std::move(controller));
+                requests.push_back(std::move(request));
+                responses.push_back(std::move(response));
             }
-            else
-            {
-                LOG(WARNING)
-                    << "Failed to initialize brpc channel to " << endpoint;
-            }
+        }
+        else
+        {
+            LOG(WARNING)
+                << "Failed to initialize brpc channel to " << endpoint;
         }
     }
 
@@ -965,7 +942,38 @@ void RedisServiceImpl::BroadcastNsFlush(std::string ns)
         return;
     }
 
-    NsFlushArgs *args = new NsFlushArgs{std::move(ns), requirepass, enable_tls_};
+    auto node_id = txservice::Sharder::Instance().NodeId();
+    auto ng_configs = txservice::Sharder::Instance().GetNodeGroupConfigs();
+    std::unordered_set<uint32_t> visited_nodes;
+    std::vector<std::string> peer_endpoints;
+
+    for (const auto &[ng_id, nodes] : ng_configs)
+    {
+        for (const auto &node : nodes)
+        {
+            if (node.node_id_ == node_id)
+            {
+                continue;  // Skip self
+            }
+            if (visited_nodes.count(node.node_id_))
+            {
+                continue;  // Skip already visited node
+            }
+            visited_nodes.insert(node.node_id_);
+
+            std::string endpoint =
+                node.host_name_ + ":" +
+                std::to_string(RedisServiceImpl::TxPortToRedisPort(node.port_));
+            peer_endpoints.push_back(std::move(endpoint));
+        }
+    }
+
+    if (peer_endpoints.empty())
+    {
+        return;
+    }
+
+    NsFlushArgs *args = new NsFlushArgs{std::move(ns), requirepass, enable_tls_, std::move(peer_endpoints)};
     bthread_t tid;
     if (bthread_start_background(&tid, nullptr, DoBroadcastNsFlush, args) != 0)
     {
