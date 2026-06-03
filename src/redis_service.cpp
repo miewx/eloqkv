@@ -821,6 +821,7 @@ struct NsFlushArgs
 {
     std::string ns;
     std::string requirepass;
+    bool enable_tls;
 };
 
 static void *DoBroadcastNsFlush(void *arg)
@@ -831,6 +832,7 @@ static void *DoBroadcastNsFlush(void *arg)
     std::unordered_set<uint32_t> visited_nodes;
 
     std::vector<std::unique_ptr<brpc::Channel>> channels;
+    std::vector<std::string> peer_endpoints;
     std::vector<std::unique_ptr<brpc::Controller>> controllers;
     std::vector<std::unique_ptr<brpc::RedisRequest>> requests;
     std::vector<std::unique_ptr<brpc::RedisResponse>> responses;
@@ -841,6 +843,7 @@ static void *DoBroadcastNsFlush(void *arg)
         max_nodes += nodes.size();
     }
     channels.reserve(max_nodes);
+    peer_endpoints.reserve(max_nodes);
     controllers.reserve(max_nodes);
     requests.reserve(max_nodes);
     responses.reserve(max_nodes);
@@ -863,6 +866,10 @@ static void *DoBroadcastNsFlush(void *arg)
             brpc::ChannelOptions options;
             options.protocol = brpc::PROTOCOL_REDIS;
             options.timeout_ms = 500;
+            if (args->enable_tls)
+            {
+                options.mutable_ssl_options();
+            }
 
             std::string endpoint =
                 node.host_name_ + ":" +
@@ -894,6 +901,7 @@ static void *DoBroadcastNsFlush(void *arg)
                                         brpc::DoNothing());
 
                     channels.push_back(std::move(channel));
+                    peer_endpoints.push_back(endpoint);
                     controllers.push_back(std::move(controller));
                     requests.push_back(std::move(request));
                     responses.push_back(std::move(response));
@@ -907,26 +915,57 @@ static void *DoBroadcastNsFlush(void *arg)
         }
     }
 
-    for (auto &cntl : controllers)
+    for (size_t i = 0; i < controllers.size(); ++i)
     {
-        brpc::Join(cntl->call_id());
-        if (cntl->Failed())
+        brpc::Join(controllers[i]->call_id());
+        if (controllers[i]->Failed())
         {
-            LOG(WARNING) << "Failed to send NS flush asynchronously: "
-                         << cntl->ErrorText();
+            LOG(WARNING) << "Failed to send NS flush asynchronously to peer " << peer_endpoints[i]
+                         << ": " << controllers[i]->ErrorText();
+        }
+        else
+        {
+            const auto &res = *responses[i];
+            if (res.reply_size() == 0)
+            {
+                LOG(WARNING) << "Received empty redis response for NS flush from peer " << peer_endpoints[i];
+            }
+            else
+            {
+                const auto &reply = res.reply(0);
+                if (reply.is_error())
+                {
+                    LOG(WARNING) << "NS flush failed on peer " << peer_endpoints[i]
+                                 << " with error: " << reply.error_message();
+                }
+                else if (reply.is_string())
+                {
+                    if (reply.data() != "OK")
+                    {
+                        LOG(WARNING) << "NS flush failed on peer " << peer_endpoints[i]
+                                     << " with response: " << reply.data();
+                    }
+                }
+                else
+                {
+                    LOG(WARNING) << "NS flush failed on peer " << peer_endpoints[i]
+                                 << " with unexpected response type: "
+                                 << brpc::RedisReplyTypeToString(reply.type());
+                }
+            }
         }
     }
     return nullptr;
 }
 
-void RedisServiceImpl::BroadcastNsFlush(std::string_view ns)
+void RedisServiceImpl::BroadcastNsFlush(std::string ns)
 {
     if (!FLAGS_cluster_mode)
     {
         return;
     }
 
-    NsFlushArgs *args = new NsFlushArgs{std::string(ns), requirepass};
+    NsFlushArgs *args = new NsFlushArgs{std::move(ns), requirepass, enable_tls_};
     bthread_t tid;
     if (bthread_start_background(&tid, nullptr, DoBroadcastNsFlush, args) != 0)
     {

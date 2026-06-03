@@ -7,21 +7,21 @@
 
 ### 1. 创建名字空间
 执行命令：
-```
+```text
 eloqkv ❯ NAMESPACE ADD tenant1
 "bXluZXduYW1lc3BhY2V0b2"
 ```
 
 ### 2. 认证
 使用生成的 Token 进行认证：
-```
+```text
 eloqkv ❯ AUTH bXluZXduYW1lc3BhY2V0b2
 OK
 ```
 
 ### 3. 数据读写
 写入和读取数据：
-```
+```text
 eloqkv ❯ SET key1 value1
 OK
 eloqkv ❯ GET key1
@@ -31,7 +31,7 @@ eloqkv ❯ GET key1
 ## 键隔离
 - `AUTH`认证时，通过不同的令牌区分不同的名字空间。
 - 连接仅访问自身名字空间中的键。
-- 名字空间的租户不支持 select。
+- 名字空间的租户不支持 `SELECT` 命令。
 
 ## 认证方式
 访问名字空间的步骤：
@@ -56,7 +56,7 @@ eloqkv ❯ GET key1
 #### NAMESPACE GET *
 - 返回名字空间与 Token 的列表。
 - 返回值示例：
-  ```
+  ```text
   1) "tenant1"
   2) "bXluZXduYW1lc3BhY2V0b2"
   3) "tenant2"

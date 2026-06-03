@@ -1556,11 +1556,23 @@ void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
 
     if (op_ == NamespaceCommand::kOpNsFlush)
     {
-        if (!requirepass.empty() && token_ != requirepass)
+        if (!requirepass.empty())
         {
-            result_.success = false;
-            result_.err_msg = "ERR unauthorized internal command";
-            return;
+            if (token_ != requirepass)
+            {
+                result_.success = false;
+                result_.err_msg = "ERR unauthorized internal command";
+                return;
+            }
+        }
+        else
+        {
+            if (ctx->ns != "default")
+            {
+                result_.success = false;
+                result_.err_msg = "ERR unauthorized internal command";
+                return;
+            }
         }
         auto ns_mgr = redis_impl->GetNamespaceManager();
         ns_mgr->RemoveMetadata(ns_);
