@@ -804,6 +804,16 @@ uint32_t RedisServiceImpl::RedisClusterNodesCount()
     return txservice::Sharder::Instance().GetNodeCount();
 }
 
+bool RedisServiceImpl::IsLeader(uint32_t ng_id) const
+{
+    if (!FLAGS_cluster_mode)
+    {
+        return true;
+    }
+    return txservice::Sharder::Instance().NodeId() ==
+           txservice::Sharder::Instance().LeaderNodeId(ng_id);
+}
+
 void RedisServiceImpl::GetReplicaNodesStatus(
     std::unordered_map<uint32_t, std::vector<HostNetworkInfo>> &nodes_status)
     const

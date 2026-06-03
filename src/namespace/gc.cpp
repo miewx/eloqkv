@@ -1,7 +1,6 @@
 #include "namespace/gc.h"
 
 #include <glog/logging.h>
-#include "sharder.h"
 
 #include "b255.h"
 #include "eloqkv_key.h"
@@ -47,7 +46,7 @@ void NamespaceGc::RunDaemon()
     {
         if (FLAGS_cluster_mode)
         {
-            if (txservice::Sharder::Instance().NodeId() != txservice::Sharder::Instance().LeaderNodeId(0))
+            if (!server_->IsLeader(0))
             {
                 for (int i = 0; i < 50; ++i)
                 {

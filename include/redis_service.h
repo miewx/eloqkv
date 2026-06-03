@@ -187,6 +187,8 @@ public:
         return tx_port - 10000;
     }
 
+    bool IsLeader(uint32_t ng_id = 0) const;
+
     // Get all replica node status of node groups.
     // nodes_info is as: map{ng_id,[nodes_info,...]}
     void GetReplicaNodesStatus(
