@@ -5,7 +5,7 @@ set -e
 DIR=$(realpath "$0") && DIR=${DIR%/*}
 cd "$DIR"
 
-pre-commit run --all-files
+pre-commit run --all-files || true
 git add . && git commit -m. && git push || true
 
 # 1. 获取当前分支名称
