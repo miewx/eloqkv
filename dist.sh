@@ -12,9 +12,9 @@ if [ -z "$CURRENT_BRANCH" ]; then
 fi
 
 PURE_BRANCH="${CURRENT_BRANCH}_pure"
-TMP_DIR="${DIR}/tmp/eloqkv_pure"
+TMP_DIR="/tmp/eloqkv_pure"
+rm -rf $TMP_DIR
 
-# Cleanup function to be run on exit or error
 cleanup() {
   echo "Cleaning up worktree..."
   cd "$DIR"
