@@ -19,9 +19,3 @@ exec $RUNNER run --rm \
   -v "$DIR":/app \
   -w /app eloqdata/eloqkv-builder:latest \
   ./sh/build_then_test.sh "$@"
-# }
-#
-# run_test "$@"
-# if [ $# -eq 0 ]; then
-#   run_test -DWITH_DATA_STORE=ROCKSDB
-# fi

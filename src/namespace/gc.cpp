@@ -52,16 +52,9 @@ void NamespaceGc::RunDaemon()
         // up GC records to prevent redundant executions and transaction conflicts.
         if (FLAGS_cluster_mode)
         {
-            if (!server_->IsLeader(0))
+            if (!server_->IsLeader())
             {
-                for (int i = 0; i < 50; ++i)
-                {
-                    if (server_->IsStopping())
-                    {
-                        break;
-                    }
-                    bthread_usleep(100 * 1000);
-                }
+                SleepWithStopCheck(50);
                 continue;
             }
         }
@@ -73,14 +66,7 @@ void NamespaceGc::RunDaemon()
 
         if (gc_records.empty())
         {
-            for (int i = 0; i < 300; ++i)
-            {
-                if (server_->IsStopping())
-                {
-                    break;
-                }
-                bthread_usleep(100 * 1000);  // 100ms
-            }
+            SleepWithStopCheck(300);
             continue;
         }
 
@@ -123,6 +109,18 @@ void NamespaceGc::RunDaemon()
         }
     }
     LOG(INFO) << "Namespace GC daemon stopped.";
+}
+
+void NamespaceGc::SleepWithStopCheck(int hundred_ms_units)
+{
+    for (int i = 0; i < hundred_ms_units; ++i)
+    {
+        if (server_->IsStopping())
+        {
+            break;
+        }
+        bthread_usleep(100 * 1000);
+    }
 }
 
 std::vector<std::string> NamespaceGc::ScanGCRecords()

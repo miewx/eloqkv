@@ -783,7 +783,7 @@ struct SelectCommand : public DirectCommand
 
 struct NamespaceCommand : public DirectCommand
 {
-    static constexpr std::string_view kOpNsFlush = "ns_flush";
+    static constexpr const char* kOpNsFlush = "ns_flush";
 
     NamespaceCommand() = default;
     NamespaceCommand(std::string_view op,

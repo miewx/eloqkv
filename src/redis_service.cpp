@@ -859,14 +859,14 @@ static void *DoBroadcastNsFlush(void *arg)
                 if (!requirepass.empty())
                 {
                     ok = request.AddCommand("NAMESPACE %s %s %s",
-                                            std::string(NamespaceCommand::kOpNsFlush).c_str(),
+                                            NamespaceCommand::kOpNsFlush,
                                             args->ns.c_str(),
                                             requirepass.c_str());
                 }
                 else
                 {
                     ok = request.AddCommand("NAMESPACE %s %s",
-                                            std::string(NamespaceCommand::kOpNsFlush).c_str(),
+                                            NamespaceCommand::kOpNsFlush,
                                             args->ns.c_str());
                 }
 
@@ -875,6 +875,11 @@ static void *DoBroadcastNsFlush(void *arg)
                     brpc::Controller cntl;
                     brpc::RedisResponse response;
                     channel.CallMethod(NULL, &cntl, &request, &response, NULL);
+                    if (cntl.Failed())
+                    {
+                        LOG(WARNING) << "Failed to send NS flush to " << endpoint
+                                     << ": " << cntl.ErrorText();
+                    }
                 }
             }
         }
@@ -5986,24 +5991,23 @@ bool RedisServiceImpl::AuthRequired(
         return false;
     }
 
-    // Bypass auth for "NAMESPACE CURRENT" and "NAMESPACE ns_flush"
-    if (args.size() >= 2)
-    {
-        std::string first(args[0].data(), args[0].size());
-        std::string second(args[1].data(), args[1].size());
-        std::transform(first.begin(), first.end(), first.begin(), ::tolower);
-        std::transform(second.begin(), second.end(), second.begin(), ::tolower);
-        if (first == "namespace" && (second == "current" || second == "ns_flush"))
-        {
-            return false;
-        }
-    }
-
     constexpr std::array<std::string_view, 4> cmds_no_auth = {
         "auth", "hello", "quit", "reset"};
     std::string cmd_name(args[0].data(), args[0].size());
     std::transform(
         cmd_name.begin(), cmd_name.end(), cmd_name.begin(), ::tolower);
+
+    // Bypass auth for "NAMESPACE CURRENT" and "NAMESPACE ns_flush"
+    if (cmd_name == "namespace" && args.size() >= 2)
+    {
+        std::string subcommand(args[1].data(), args[1].size());
+        std::transform(subcommand.begin(), subcommand.end(), subcommand.begin(), ::tolower);
+        if (subcommand == "current" || subcommand == "ns_flush")
+        {
+            return false;
+        }
+    }
+
     return std::find(cmds_no_auth.begin(), cmds_no_auth.end(), cmd_name) ==
            cmds_no_auth.end();
 }
