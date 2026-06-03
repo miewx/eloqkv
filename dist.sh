@@ -52,9 +52,6 @@ rm -rf sh .mise.toml
 # 4. 使用 soft reset 将此分支与 main 之间的所有更改压缩为单个提交
 git reset --soft main
 
-# 先删除同名的远程分支。如果不存在，则忽略错误
-git push origin --delete "$PURE_BRANCH" || true
-
 # 执行 git add
 git add -A
 
