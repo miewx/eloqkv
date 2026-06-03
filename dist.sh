@@ -12,7 +12,7 @@ if [ -z "$CURRENT_BRANCH" ]; then
 fi
 
 PURE_BRANCH="${CURRENT_BRANCH}_pure"
-TMP_DIR="${DIR}/.tmp/eloqkv_pure"
+TMP_DIR="${DIR}/tmp/eloqkv_pure"
 
 # Cleanup function to be run on exit or error
 cleanup() {
@@ -46,19 +46,17 @@ cd "$TMP_DIR"
 rm -f *.sh
 rm -rf sh
 
-# Commit the deletion of *.sh and sh/
-git add -A
-git commit -m "chore: remove .sh files and sh directory" || true
-
-# 4. Squash all changes between this branch and main into a single commit
+# 4. Squash all changes between this branch and main into a single commit using soft reset
 git reset --soft main
 
-# Commit the squashed changes
-if git diff --cached --quiet; then
-    git commit --allow-empty -m "feat: squashed changes from ${CURRENT_BRANCH} (without sh/sh scripts)"
-else
-    git commit -m "feat: squashed changes from ${CURRENT_BRANCH} (without sh/sh scripts)"
-fi
+# Delete the remote branch of the same name first. If not exists, ignore error
+git push origin --delete "$PURE_BRANCH" || true
+
+# Git add
+git add -A
+
+# Run gci to generate the commit
+gci
 
 # 5. Force push the new branch to remote
 git push origin "$PURE_BRANCH" --force
@@ -66,8 +64,12 @@ git push origin "$PURE_BRANCH" --force
 # 6. Go back to original directory and delete local _pure branch
 cd "$DIR"
 # Remove worktree first so we can delete the branch
-git worktree remove -f "$TMP_DIR" || true
-rm -rf "$TMP_DIR" || true
+if git worktree list | grep -q "$TMP_DIR"; then
+    git worktree remove -f "$TMP_DIR" || true
+fi
+if [ -d "$TMP_DIR" ]; then
+    rm -rf "$TMP_DIR" || true
+fi
 
 git branch -D "$PURE_BRANCH" || true
 
