@@ -24,13 +24,21 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Waiting for eloqkv to be ready..."
+READY=false
 for i in {1..20}; do
   if (echo -en "PING\r\n" | nc 127.0.0.1 6379 | grep -q +PONG); then
     echo "eloqkv server is ready!"
+    READY=true
     break
   fi
   sleep 0.5
 done
+
+if [ "$READY" = "false" ]; then
+  echo "eloqkv server failed to start! Server logs:"
+  cat /tmp/eloqkv.log
+  exit 1
+fi
 
 echo "Running Tcl tests..."
 TEST_FILES=$(find tests/unit/eloq -maxdepth 1 -name "*.tcl" | sort)

@@ -22,6 +22,8 @@
 #include "redis_service.h"
 
 #include <absl/types/span.h>
+#include <brpc/channel.h>
+#include <bthread/bthread.h>
 #include <bthread/mutex.h>
 #include <bthread/task_group.h>
 #include <butil/strings/string_piece.h>
@@ -814,15 +816,18 @@ bool RedisServiceImpl::IsLeader(uint32_t ng_id) const
            txservice::Sharder::Instance().LeaderNodeId(ng_id);
 }
 
-void RedisServiceImpl::BroadcastNsFlush(std::string_view ns)
+struct NsFlushArgs
 {
-    if (!FLAGS_cluster_mode)
-    {
-        return;
-    }
+    RedisServiceImpl *service;
+    std::string ns;
+};
 
+static void *DoBroadcastNsFlush(void *arg)
+{
+    std::unique_ptr<NsFlushArgs> args(static_cast<NsFlushArgs *>(arg));
     auto node_id = txservice::Sharder::Instance().NodeId();
     auto ng_configs = txservice::Sharder::Instance().GetNodeGroupConfigs();
+    std::unordered_set<uint32_t> visited_nodes;
 
     for (const auto &[ng_id, nodes] : ng_configs)
     {
@@ -832,6 +837,11 @@ void RedisServiceImpl::BroadcastNsFlush(std::string_view ns)
             {
                 continue;  // Skip self
             }
+            if (visited_nodes.count(node.node_id_))
+            {
+                continue;  // Skip already visited node
+            }
+            visited_nodes.insert(node.node_id_);
 
             brpc::Channel channel;
             brpc::ChannelOptions options;
@@ -840,14 +850,14 @@ void RedisServiceImpl::BroadcastNsFlush(std::string_view ns)
 
             std::string endpoint =
                 node.host_name_ + ":" +
-                std::to_string(TxPortToRedisPort(node.port_));
+                std::to_string(args->service->TxPortToRedisPort(node.port_));
 
             if (channel.Init(endpoint.c_str(), &options) == 0)
             {
                 brpc::RedisRequest request;
                 if (request.AddCommand("NAMESPACE %s %s",
                                        std::string(NamespaceCommand::kOpNsFlush).c_str(),
-                                       std::string(ns).c_str()))
+                                       args->ns.c_str()))
                 {
                     brpc::Controller cntl;
                     brpc::RedisResponse response;
@@ -855,6 +865,23 @@ void RedisServiceImpl::BroadcastNsFlush(std::string_view ns)
                 }
             }
         }
+    }
+    return nullptr;
+}
+
+void RedisServiceImpl::BroadcastNsFlush(std::string_view ns)
+{
+    if (!FLAGS_cluster_mode)
+    {
+        return;
+    }
+
+    NsFlushArgs *args = new NsFlushArgs{this, std::string(ns)};
+    bthread_t tid;
+    if (bthread_start_background(&tid, nullptr, DoBroadcastNsFlush, args) != 0)
+    {
+        LOG(ERROR) << "Failed to start background bthread for BroadcastNsFlush";
+        delete args;
     }
 }
 
@@ -5946,14 +5973,14 @@ bool RedisServiceImpl::AuthRequired(
         return false;
     }
 
-    // Bypass auth for "NAMESPACE CURRENT"
+    // Bypass auth for "NAMESPACE CURRENT" and "NAMESPACE ns_flush"
     if (args.size() >= 2)
     {
         std::string first(args[0].data(), args[0].size());
         std::string second(args[1].data(), args[1].size());
         std::transform(first.begin(), first.end(), first.begin(), ::tolower);
         std::transform(second.begin(), second.end(), second.begin(), ::tolower);
-        if (first == "namespace" && second == "current")
+        if (first == "namespace" && (second == "current" || second == "ns_flush"))
         {
             return false;
         }
