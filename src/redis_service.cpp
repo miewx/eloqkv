@@ -30,6 +30,7 @@
 #include <butil/strings/string_util.h>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
+#include <strings.h>
 #include <sys/resource.h>
 #include <sys/sysinfo.h>
 #include <sys/types.h>
@@ -38,7 +39,6 @@
 #include <algorithm>
 #include <atomic>
 #include <cassert>
-#include <strings.h>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -887,7 +887,11 @@ static void *DoBroadcastNsFlush(void *arg)
                     auto controller = std::make_unique<brpc::Controller>();
                     auto response = std::make_unique<brpc::RedisResponse>();
 
-                    channel->CallMethod(NULL, controller.get(), request.get(), response.get(), brpc::DoNothing());
+                    channel->CallMethod(NULL,
+                                        controller.get(),
+                                        request.get(),
+                                        response.get(),
+                                        brpc::DoNothing());
 
                     channels.push_back(std::move(channel));
                     controllers.push_back(std::move(controller));
@@ -897,7 +901,8 @@ static void *DoBroadcastNsFlush(void *arg)
             }
             else
             {
-                LOG(WARNING) << "Failed to initialize brpc channel to " << endpoint;
+                LOG(WARNING)
+                    << "Failed to initialize brpc channel to " << endpoint;
             }
         }
     }
@@ -907,7 +912,8 @@ static void *DoBroadcastNsFlush(void *arg)
         brpc::Join(cntl->call_id());
         if (cntl->Failed())
         {
-            LOG(WARNING) << "Failed to send NS flush asynchronously: " << cntl->ErrorText();
+            LOG(WARNING) << "Failed to send NS flush asynchronously: "
+                         << cntl->ErrorText();
         }
     }
     return nullptr;
