@@ -9,21 +9,25 @@
 
 static inline bool IsEq(butil::StringPiece s1, std::string_view s2)
 {
-    return s1.size() == s2.size() &&
-           strncasecmp(s1.data(), s2.data(), s2.size()) == 0;
+    const size_t len = s2.size();
+    return s1.size() == len &&
+           strncasecmp(s1.data(), s2.data(), len) == 0;
 }
 
 static inline bool IsEq(std::string_view s1, std::string_view s2)
 {
-    return s1.size() == s2.size() &&
-           strncasecmp(s1.data(), s2.data(), s2.size()) == 0;
+    const size_t len = s2.size();
+    return s1.size() == len &&
+           strncasecmp(s1.data(), s2.data(), len) == 0;
 }
 
 static inline bool IsEq(const std::string& s1, std::string_view s2)
 {
-    return s1.size() == s2.size() &&
-           strncasecmp(s1.data(), s2.data(), s2.size()) == 0;
+    const size_t len = s2.size();
+    return s1.size() == len &&
+           strncasecmp(s1.data(), s2.data(), len) == 0;
 }
+
 
 static inline bool IsEq(const char* s1, std::string_view s2)
 {
