@@ -1,6 +1,6 @@
 #pragma once
 
-#include <butil/string_piece.h>
+#include <butil/strings/string_piece.h>
 
 #include <cstring>
 #include <string_view>
