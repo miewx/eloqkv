@@ -77,6 +77,3 @@ Except for `NAMESPACE CURRENT`, only connections authenticated with the `require
 #### NAMESPACE CURRENT
 - Returns the namespace name of the connection.
 - Example response: `"tenant1"`
-
-## Garbage Collection
-When a namespace is deleted or a token changes, the system cleans up the keys.

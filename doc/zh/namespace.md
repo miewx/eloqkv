@@ -77,6 +77,3 @@ eloqkv ❯ GET key1
 #### NAMESPACE CURRENT
 - 返回连接的名字空间名称。
 - 返回值示例：`"tenant1"`
-
-## 垃圾回收
-名字空间被删除或 Token 发生变更时，系统清理对应的键。
