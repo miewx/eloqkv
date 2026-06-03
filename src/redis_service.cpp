@@ -845,10 +845,9 @@ void RedisServiceImpl::BroadcastNsFlush(std::string_view ns)
             if (channel.Init(endpoint.c_str(), &options) == 0)
             {
                 brpc::RedisRequest request;
-                std::string cmd = "NAMESPACE " +
-                                  std::string(NamespaceCommand::kOpNsFlush) +
-                                  " " + std::string(ns);
-                if (request.AddCommand(cmd.c_str()))
+                if (request.AddCommand("NAMESPACE %s %s",
+                                       std::string(NamespaceCommand::kOpNsFlush).c_str(),
+                                       std::string(ns).c_str()))
                 {
                     brpc::Controller cntl;
                     brpc::RedisResponse response;

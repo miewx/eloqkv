@@ -40,7 +40,7 @@ To access a namespace:
 The connection shifts to the namespace associated with the token.
 
 ## Administration
-To manage namespaces, authenticate with the password (`requirepass`). Namespace management is disabled when `requirepass` contains zero bytes.
+To manage namespaces, authenticate with the password (`requirepass`). Namespace management is disabled when `requirepass` is empty (length = 0).
 
 ### Commands
 
