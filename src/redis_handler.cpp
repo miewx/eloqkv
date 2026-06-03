@@ -20,7 +20,6 @@
  *
  */
 #include "redis_handler.h"
-#include "str.h"
 
 #include <brpc/redis.h>
 #include <bthread/task_group.h>
@@ -45,6 +44,7 @@
 #include "redis_replier.h"
 #include "redis_service.h"
 #include "sharder.h"
+#include "str.h"
 #include "tx_key.h"
 #include "tx_request.h"
 #include "tx_service.h"

@@ -20,7 +20,6 @@
  *
  */
 #include "redis_service.h"
-#include "str.h"
 
 #include <absl/types/span.h>
 #include <brpc/channel.h>
@@ -77,6 +76,7 @@
 #include "redis_stats.h"
 #include "redis_string_match.h"
 #include "sharder.h"
+#include "str.h"
 #include "tx_key.h"
 // #include "store_handler/rocksdb_config.h"
 #include "eloqkv_catalog_factory.h"

@@ -20,7 +20,6 @@
  *
  */
 #include "redis_command.h"
-#include "str.h"
 
 #include <brpc/acceptor.h>
 #include <butil/endpoint.h>
@@ -77,6 +76,7 @@
 #include "redis_zset_object.h"
 #include "remote/remote_type.h"
 #include "sharder.h"
+#include "str.h"
 #include "tx_command.h"
 #include "tx_request.h"
 #include "tx_service.h"
@@ -19533,8 +19533,7 @@ std::tuple<bool, SortCommand> ParseSortCommand(
             }
             j += 2;
         }
-        else if (args[0] == "sort" && IsEq(args[j], "store") &&
-                 leftargs >= 1)
+        else if (args[0] == "sort" && IsEq(args[j], "store") && leftargs >= 1)
         {
             store_key.emplace(args[j + 1]);
             j++;
