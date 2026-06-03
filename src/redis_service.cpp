@@ -814,6 +814,51 @@ bool RedisServiceImpl::IsLeader(uint32_t ng_id) const
            txservice::Sharder::Instance().LeaderNodeId(ng_id);
 }
 
+void RedisServiceImpl::BroadcastNsFlush(std::string_view ns)
+{
+    if (!FLAGS_cluster_mode)
+    {
+        return;
+    }
+
+    auto node_id = txservice::Sharder::Instance().NodeId();
+    auto ng_configs = txservice::Sharder::Instance().GetNodeGroupConfigs();
+
+    for (const auto &[ng_id, nodes] : ng_configs)
+    {
+        for (const auto &node : nodes)
+        {
+            if (node.node_id_ == node_id)
+            {
+                continue;  // Skip self
+            }
+
+            brpc::Channel channel;
+            brpc::ChannelOptions options;
+            options.protocol = brpc::PROTOCOL_REDIS;
+            options.timeout_ms = 500;
+
+            std::string endpoint =
+                node.host_name_ + ":" +
+                std::to_string(TxPortToRedisPort(node.port_));
+
+            if (channel.Init(endpoint.c_str(), &options) == 0)
+            {
+                brpc::RedisRequest request;
+                std::string cmd = "NAMESPACE " +
+                                  std::string(NamespaceCommand::kOpNsFlush) +
+                                  " " + std::string(ns);
+                if (request.AddCommand(cmd.c_str()))
+                {
+                    brpc::Controller cntl;
+                    brpc::RedisResponse response;
+                    channel.CallMethod(NULL, &cntl, &request, &response, NULL);
+                }
+            }
+        }
+    }
+}
+
 void RedisServiceImpl::GetReplicaNodesStatus(
     std::unordered_map<uint32_t, std::vector<HostNetworkInfo>> &nodes_status)
     const

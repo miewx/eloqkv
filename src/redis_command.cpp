@@ -1539,48 +1539,6 @@ void AuthCommand::OutputResult(OutputHandler *reply) const
     }
 }
 
-static void BroadcastNsFlush(RedisServiceImpl *redis_impl, std::string_view ns)
-{
-    if (!FLAGS_cluster_mode)
-    {
-        return;
-    }
-
-    auto node_id = Sharder::Instance().NodeId();
-    auto ng_configs = Sharder::Instance().GetNodeGroupConfigs();
-
-    for (const auto &[ng_id, nodes] : ng_configs)
-    {
-        for (const auto &node : nodes)
-        {
-            if (node.node_id_ == node_id)
-            {
-                continue; // Skip self
-            }
-
-            brpc::Channel channel;
-            brpc::ChannelOptions options;
-            options.protocol = brpc::PROTOCOL_REDIS;
-            options.timeout_ms = 500;
-
-            std::string endpoint = node.host_name_ + ":" +
-                std::to_string(redis_impl->TxPortToRedisPort(node.port_));
-
-            if (channel.Init(endpoint.c_str(), &options) == 0)
-            {
-                brpc::RedisRequest request;
-                std::string cmd = "NAMESPACE " + std::string(NamespaceCommand::kOpNsFlush) + " " + std::string(ns);
-                if (request.AddCommand(cmd.c_str()))
-                {
-                    brpc::Controller cntl;
-                    brpc::RedisResponse response;
-                    channel.CallMethod(NULL, &cntl, &request, &response, NULL);
-                }
-            }
-        }
-    }
-}
-
 void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
                                RedisConnectionContext *ctx)
 {
@@ -1710,7 +1668,7 @@ void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
         {
             result_.success = true;
             result_.str_val = token.ToString();
-            BroadcastNsFlush(redis_impl, ns_);
+            redis_impl->BroadcastNsFlush(ns_);
         }
         else
         {
@@ -1731,7 +1689,7 @@ void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
             if (ok)
             {
                 result_.success = true;
-                BroadcastNsFlush(redis_impl, ns_);
+                redis_impl->BroadcastNsFlush(ns_);
             }
             else
             {
@@ -10683,7 +10641,8 @@ std::tuple<bool, NamespaceCommand> ParseNamespaceCommand(
     }
     else if (args.size() == 3 && subcommand == NamespaceCommand::kOpNsFlush)
     {
-        return {true, NamespaceCommand(NamespaceCommand::kOpNsFlush, args[2], "")};
+        return {true,
+                NamespaceCommand(NamespaceCommand::kOpNsFlush, args[2], "")};
     }
     else
     {

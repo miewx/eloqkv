@@ -5,6 +5,11 @@ set -e
 DIR=$(realpath "$0") && DIR=${DIR%/*}
 cd "$DIR"
 
+pre-commit run --all-files
+git add .
+git commit -m.
+git push
+
 # 1. Get the current branch name
 CURRENT_BRANCH=$(git branch --show-current)
 if [ -z "$CURRENT_BRANCH" ]; then
