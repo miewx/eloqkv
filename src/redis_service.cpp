@@ -835,6 +835,16 @@ static void *DoBroadcastNsFlush(void *arg)
     std::vector<std::unique_ptr<brpc::RedisRequest>> requests;
     std::vector<std::unique_ptr<brpc::RedisResponse>> responses;
 
+    size_t max_nodes = 0;
+    for (const auto &[ng_id, nodes] : ng_configs)
+    {
+        max_nodes += nodes.size();
+    }
+    channels.reserve(max_nodes);
+    controllers.reserve(max_nodes);
+    requests.reserve(max_nodes);
+    responses.reserve(max_nodes);
+
     for (const auto &[ng_id, nodes] : ng_configs)
     {
         for (const auto &node : nodes)
@@ -884,6 +894,10 @@ static void *DoBroadcastNsFlush(void *arg)
                     requests.push_back(std::move(request));
                     responses.push_back(std::move(response));
                 }
+            }
+            else
+            {
+                LOG(WARNING) << "Failed to initialize brpc channel to " << endpoint;
             }
         }
     }
@@ -5985,6 +5999,12 @@ size_t RedisServiceImpl::GetRedisTableCount() const
     return redis_table_names_.size();
 }
 
+static inline bool EqualsIgnoreCase(butil::StringPiece s1, std::string_view s2)
+{
+    return s1.size() == s2.size() &&
+           strncasecmp(s1.data(), s2.data(), s2.size()) == 0;
+}
+
 bool RedisServiceImpl::AuthRequired(
     const RedisConnectionContext *ctx,
     const std::vector<butil::StringPiece> &args) const
@@ -6004,32 +6024,21 @@ bool RedisServiceImpl::AuthRequired(
     }
 
     const auto &cmd = args[0];
-    if (cmd.size() == 4)
+    if (EqualsIgnoreCase(cmd, "auth") || EqualsIgnoreCase(cmd, "quit"))
     {
-        if (strncasecmp(cmd.data(), "auth", 4) == 0 ||
-            strncasecmp(cmd.data(), "quit", 4) == 0)
-        {
-            return false;
-        }
+        return false;
     }
-    else if (cmd.size() == 5)
+    else if (EqualsIgnoreCase(cmd, "hello") || EqualsIgnoreCase(cmd, "reset"))
     {
-        if (strncasecmp(cmd.data(), "hello", 5) == 0 ||
-            strncasecmp(cmd.data(), "reset", 5) == 0)
-        {
-            return false;
-        }
+        return false;
     }
-    else if (cmd.size() == 9 && strncasecmp(cmd.data(), "namespace", 9) == 0)
+    else if (EqualsIgnoreCase(cmd, "namespace"))
     {
         if (args.size() >= 2)
         {
             const auto &subcmd = args[1];
-            if (subcmd.size() == 7 && strncasecmp(subcmd.data(), "current", 7) == 0)
-            {
-                return false;
-            }
-            if (subcmd.size() == 8 && strncasecmp(subcmd.data(), "ns_flush", 8) == 0)
+            if (EqualsIgnoreCase(subcmd, "current") ||
+                EqualsIgnoreCase(subcmd, "ns_flush"))
             {
                 return false;
             }

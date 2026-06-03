@@ -1540,6 +1540,13 @@ void AuthCommand::OutputResult(OutputHandler *reply) const
 void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
                                RedisConnectionContext *ctx)
 {
+    if (!ctx)
+    {
+        result_.success = false;
+        result_.err_msg = "ERR missing connection context";
+        return;
+    }
+
     if (op_ == "current")
     {
         result_.success = true;

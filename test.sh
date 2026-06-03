@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
-DIR=$(realpath $0) && DIR=${DIR%/*}
-cd $DIR
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$DIR"
 . sh/pid.sh
 
 if command -v podman &>/dev/null; then
