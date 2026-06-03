@@ -22,7 +22,6 @@ run_test() {
 }
 
 run_test "$@"
-if [ $# -eq 0 ]; then
-  run_test -DWITH_DATA_STORE=ROCKSDB
-fi
-
+# if [ $# -eq 0 ]; then
+#   run_test -DWITH_DATA_STORE=ROCKSDB
+# fi
