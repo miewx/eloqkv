@@ -40,11 +40,9 @@ eloqkv ❯ GET key1
 连接切换到与该 Token 关联的名字空间。
 
 ## 管理
-管理名字空间需要连接处于 `default` 名字空间。如果配置了密码 `requirepass`，则连接还必须使用该密码进行认证。
+除 `NAMESPACE CURRENT` 外，管理名字空间需要连接处于 `default` 名字空间（若配置了密码 `requirepass`，则连接还必须通过认证）。
 
 ### 命令
-
-除 `NAMESPACE CURRENT` 外，其他命令只有处于 `default` 名字空间的连接（如果配置了 `requirepass` 则必须认证）才能执行。
 
 #### NAMESPACE ADD <namespace_name>
 - 创建名字空间。
