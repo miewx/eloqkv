@@ -887,8 +887,7 @@ static void *DoBroadcastNsFlush(void *arg)
         }
         else
         {
-            LOG(WARNING)
-                << "Failed to initialize brpc channel to " << endpoint;
+            LOG(WARNING) << "Failed to initialize brpc channel to " << endpoint;
         }
     }
 
@@ -897,37 +896,43 @@ static void *DoBroadcastNsFlush(void *arg)
         brpc::Join(controllers[i]->call_id());
         if (controllers[i]->Failed())
         {
-            LOG(WARNING) << "Failed to send NS flush asynchronously to peer " << peer_endpoints[i]
-                         << ": " << controllers[i]->ErrorText();
+            LOG(WARNING) << "Failed to send NS flush asynchronously to peer "
+                         << peer_endpoints[i] << ": "
+                         << controllers[i]->ErrorText();
         }
         else
         {
             const auto &res = *responses[i];
             if (res.reply_size() == 0)
             {
-                LOG(WARNING) << "Received empty redis response for NS flush from peer " << peer_endpoints[i];
+                LOG(WARNING)
+                    << "Received empty redis response for NS flush from peer "
+                    << peer_endpoints[i];
             }
             else
             {
                 const auto &reply = res.reply(0);
                 if (reply.is_error())
                 {
-                    LOG(WARNING) << "NS flush failed on peer " << peer_endpoints[i]
-                                 << " with error: " << reply.error_message();
+                    LOG(WARNING)
+                        << "NS flush failed on peer " << peer_endpoints[i]
+                        << " with error: " << reply.error_message();
                 }
                 else if (reply.is_string())
                 {
                     if (reply.data() != "OK")
                     {
-                        LOG(WARNING) << "NS flush failed on peer " << peer_endpoints[i]
-                                     << " with response: " << reply.data();
+                        LOG(WARNING)
+                            << "NS flush failed on peer " << peer_endpoints[i]
+                            << " with response: " << reply.data();
                     }
                 }
                 else
                 {
-                    LOG(WARNING) << "NS flush failed on peer " << peer_endpoints[i]
-                                 << " with unexpected response type: "
-                                 << brpc::RedisReplyTypeToString(reply.type());
+                    LOG(WARNING)
+                        << "NS flush failed on peer " << peer_endpoints[i]
+                        << " with unexpected response type: "
+                        << brpc::RedisReplyTypeToString(reply.type());
                 }
             }
         }
@@ -973,7 +978,8 @@ void RedisServiceImpl::BroadcastNsFlush(std::string ns)
         return;
     }
 
-    NsFlushArgs *args = new NsFlushArgs{std::move(ns), requirepass, enable_tls_, std::move(peer_endpoints)};
+    NsFlushArgs *args = new NsFlushArgs{
+        std::move(ns), requirepass, enable_tls_, std::move(peer_endpoints)};
     bthread_t tid;
     if (bthread_start_background(&tid, nullptr, DoBroadcastNsFlush, args) != 0)
     {
