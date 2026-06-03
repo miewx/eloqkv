@@ -855,9 +855,22 @@ static void *DoBroadcastNsFlush(void *arg)
             if (channel.Init(endpoint.c_str(), &options) == 0)
             {
                 brpc::RedisRequest request;
-                if (request.AddCommand("NAMESPACE %s %s",
-                                       std::string(NamespaceCommand::kOpNsFlush).c_str(),
-                                       args->ns.c_str()))
+                bool ok = false;
+                if (!requirepass.empty())
+                {
+                    ok = request.AddCommand("NAMESPACE %s %s %s",
+                                            std::string(NamespaceCommand::kOpNsFlush).c_str(),
+                                            args->ns.c_str(),
+                                            requirepass.c_str());
+                }
+                else
+                {
+                    ok = request.AddCommand("NAMESPACE %s %s",
+                                            std::string(NamespaceCommand::kOpNsFlush).c_str(),
+                                            args->ns.c_str());
+                }
+
+                if (ok)
                 {
                     brpc::Controller cntl;
                     brpc::RedisResponse response;

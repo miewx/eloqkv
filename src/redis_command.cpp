@@ -1551,6 +1551,12 @@ void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
 
     if (op_ == NamespaceCommand::kOpNsFlush)
     {
+        if (!requirepass.empty() && token_ != requirepass)
+        {
+            result_.success = false;
+            result_.err_msg = "ERR unauthorized internal command";
+            return;
+        }
         auto ns_mgr = redis_impl->GetNamespaceManager();
         ns_mgr->RemoveMetadata(ns_);
         result_.success = true;
@@ -10639,10 +10645,11 @@ std::tuple<bool, NamespaceCommand> ParseNamespaceCommand(
     {
         return {true, NamespaceCommand("refresh", args[2], "")};
     }
-    else if (args.size() == 3 && subcommand == NamespaceCommand::kOpNsFlush)
+    else if ((args.size() == 3 || args.size() == 4) && subcommand == NamespaceCommand::kOpNsFlush)
     {
+        std::string_view token = (args.size() == 4) ? args[3] : "";
         return {true,
-                NamespaceCommand(NamespaceCommand::kOpNsFlush, args[2], "")};
+                NamespaceCommand(NamespaceCommand::kOpNsFlush, args[2], token)};
     }
     else
     {
