@@ -2,6 +2,7 @@
 set -e
 DIR=$(realpath $0) && DIR=${DIR%/*}
 cd $DIR
+. sh/pid.sh
 
 if command -v podman &>/dev/null; then
   RUNNER=podman
