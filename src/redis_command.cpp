@@ -1562,15 +1562,7 @@ void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
         return;
     }
 
-    if (requirepass.empty())
-    {
-        result_.success = false;
-        result_.err_msg =
-            "ERR forbidden to manage namespace when requirepass was empty";
-        return;
-    }
-
-    if (!ctx->authenticated || ctx->ns != "default")
+    if (ctx->ns != "default" || (!requirepass.empty() && !ctx->authenticated))
     {
         result_.success = false;
         result_.err_msg =

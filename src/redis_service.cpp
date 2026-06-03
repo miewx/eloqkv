@@ -819,7 +819,6 @@ bool RedisServiceImpl::IsLeader(uint32_t ng_id) const
 
 struct NsFlushArgs
 {
-    RedisServiceImpl *service;
     std::string ns;
     std::string requirepass;
 };
@@ -857,7 +856,7 @@ static void *DoBroadcastNsFlush(void *arg)
 
             std::string endpoint =
                 node.host_name_ + ":" +
-                std::to_string(args->service->TxPortToRedisPort(node.port_));
+                std::to_string(RedisServiceImpl::TxPortToRedisPort(node.port_));
 
             if (channel->Init(endpoint.c_str(), &options) == 0)
             {
@@ -907,7 +906,7 @@ void RedisServiceImpl::BroadcastNsFlush(std::string_view ns)
         return;
     }
 
-    NsFlushArgs *args = new NsFlushArgs{this, std::string(ns), requirepass};
+    NsFlushArgs *args = new NsFlushArgs{std::string(ns), requirepass};
     bthread_t tid;
     if (bthread_start_background(&tid, nullptr, DoBroadcastNsFlush, args) != 0)
     {

@@ -40,11 +40,11 @@ To access a namespace:
 The connection shifts to the namespace associated with the token.
 
 ## Administration
-To manage namespaces, authenticate with the password (`requirepass`). Namespace management is disabled when `requirepass` is empty (length = 0).
+To manage namespaces, the connection must belong to the `default` namespace. If `requirepass` is set, the connection must also be authenticated using that password.
 
 ### Commands
 
-Except for `NAMESPACE CURRENT`, only connections authenticated with the `requirepass` password (the administrator user) can execute these commands.
+Except for `NAMESPACE CURRENT`, only connections on the `default` namespace (and authenticated with the `requirepass` password if configured) can execute these commands.
 
 #### NAMESPACE ADD <namespace_name>
 - Creates a namespace.
