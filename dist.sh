@@ -6,9 +6,7 @@ DIR=$(realpath "$0") && DIR=${DIR%/*}
 cd "$DIR"
 
 pre-commit run --all-files
-git add .
-git commit -m.
-git push
+git add . && git commit -m. && git push || true
 
 # 1. 获取当前分支名称
 CURRENT_BRANCH=$(git branch --show-current)
