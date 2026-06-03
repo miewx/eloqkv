@@ -182,7 +182,7 @@ public:
     // The total number of known nodes in the cluster
     uint32_t RedisClusterNodesCount();
 
-    uint16_t TxPortToRedisPort(uint16_t tx_port) const
+    static uint16_t TxPortToRedisPort(uint16_t tx_port)
     {
         return tx_port - 10000;
     }

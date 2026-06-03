@@ -38,6 +38,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cassert>
+#include <strings.h>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -830,6 +831,11 @@ static void *DoBroadcastNsFlush(void *arg)
     auto ng_configs = txservice::Sharder::Instance().GetNodeGroupConfigs();
     std::unordered_set<uint32_t> visited_nodes;
 
+    std::vector<std::unique_ptr<brpc::Channel>> channels;
+    std::vector<std::unique_ptr<brpc::Controller>> controllers;
+    std::vector<std::unique_ptr<brpc::RedisRequest>> requests;
+    std::vector<std::unique_ptr<brpc::RedisResponse>> responses;
+
     for (const auto &[ng_id, nodes] : ng_configs)
     {
         for (const auto &node : nodes)
@@ -844,7 +850,7 @@ static void *DoBroadcastNsFlush(void *arg)
             }
             visited_nodes.insert(node.node_id_);
 
-            brpc::Channel channel;
+            auto channel = std::make_unique<brpc::Channel>();
             brpc::ChannelOptions options;
             options.protocol = brpc::PROTOCOL_REDIS;
             options.timeout_ms = 500;
@@ -853,10 +859,9 @@ static void *DoBroadcastNsFlush(void *arg)
                 node.host_name_ + ":" +
                 std::to_string(args->service->TxPortToRedisPort(node.port_));
 
-            if (channel.Init(endpoint.c_str(), &options) == 0)
+            if (channel->Init(endpoint.c_str(), &options) == 0)
             {
-                brpc::RedisRequest request;
-                bool ok = false;
+                auto request = std::make_unique<brpc::RedisRequest>();
                 butil::StringPiece components[4];
                 components[0] = "NAMESPACE";
                 components[1] = NamespaceCommand::kOpNsFlush;
@@ -867,20 +872,29 @@ static void *DoBroadcastNsFlush(void *arg)
                     components[3] = args->requirepass;
                     num_components = 4;
                 }
-                ok = request.AddCommandByComponents(components, num_components);
 
-                if (ok)
+                if (request->AddCommandByComponents(components, num_components))
                 {
-                    brpc::Controller cntl;
-                    brpc::RedisResponse response;
-                    channel.CallMethod(NULL, &cntl, &request, &response, NULL);
-                    if (cntl.Failed())
-                    {
-                        LOG(WARNING) << "Failed to send NS flush to "
-                                     << endpoint << ": " << cntl.ErrorText();
-                    }
+                    auto controller = std::make_unique<brpc::Controller>();
+                    auto response = std::make_unique<brpc::RedisResponse>();
+
+                    channel->CallMethod(NULL, controller.get(), request.get(), response.get(), brpc::DoNothing());
+
+                    channels.push_back(std::move(channel));
+                    controllers.push_back(std::move(controller));
+                    requests.push_back(std::move(request));
+                    responses.push_back(std::move(response));
                 }
             }
+        }
+    }
+
+    for (auto &cntl : controllers)
+    {
+        brpc::Join(cntl->call_id());
+        if (cntl->Failed())
+        {
+            LOG(WARNING) << "Failed to send NS flush asynchronously: " << cntl->ErrorText();
         }
     }
     return nullptr;
@@ -5990,28 +6004,40 @@ bool RedisServiceImpl::AuthRequired(
         return false;
     }
 
-    constexpr std::array<std::string_view, 4> cmds_no_auth = {
-        "auth", "hello", "quit", "reset"};
-    std::string cmd_name(args[0].data(), args[0].size());
-    std::transform(
-        cmd_name.begin(), cmd_name.end(), cmd_name.begin(), ::tolower);
-
-    // Bypass auth for "NAMESPACE CURRENT" and "NAMESPACE ns_flush"
-    if (cmd_name == "namespace" && args.size() >= 2)
+    const auto &cmd = args[0];
+    if (cmd.size() == 4)
     {
-        std::string subcommand(args[1].data(), args[1].size());
-        std::transform(subcommand.begin(),
-                       subcommand.end(),
-                       subcommand.begin(),
-                       ::tolower);
-        if (subcommand == "current" || subcommand == "ns_flush")
+        if (strncasecmp(cmd.data(), "auth", 4) == 0 ||
+            strncasecmp(cmd.data(), "quit", 4) == 0)
         {
             return false;
         }
     }
+    else if (cmd.size() == 5)
+    {
+        if (strncasecmp(cmd.data(), "hello", 5) == 0 ||
+            strncasecmp(cmd.data(), "reset", 5) == 0)
+        {
+            return false;
+        }
+    }
+    else if (cmd.size() == 9 && strncasecmp(cmd.data(), "namespace", 9) == 0)
+    {
+        if (args.size() >= 2)
+        {
+            const auto &subcmd = args[1];
+            if (subcmd.size() == 7 && strncasecmp(subcmd.data(), "current", 7) == 0)
+            {
+                return false;
+            }
+            if (subcmd.size() == 8 && strncasecmp(subcmd.data(), "ns_flush", 8) == 0)
+            {
+                return false;
+            }
+        }
+    }
 
-    return std::find(cmds_no_auth.begin(), cmds_no_auth.end(), cmd_name) ==
-           cmds_no_auth.end();
+    return true;
 }
 
 std::unique_ptr<brpc::ConnectionContext> RedisServiceImpl::NewConnectionContext(
