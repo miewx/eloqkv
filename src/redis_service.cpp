@@ -20,6 +20,7 @@
  *
  */
 #include "redis_service.h"
+#include "str.h"
 
 #include <absl/types/span.h>
 #include <brpc/channel.h>
@@ -405,11 +406,11 @@ bool RedisServiceImpl::Init(brpc::Server &brpc_server)
     IsolationLevel iso_level;
     CcProtocol protocol;
     // Support ReadCommitted and RepeatableRead.
-    if (strcasecmp(isolation_level.c_str(), "RepeatableRead") == 0)
+    if (IsEq(isolation_level, "RepeatableRead"))
     {
         iso_level = txservice::IsolationLevel::RepeatableRead;
     }
-    else if (strcasecmp(isolation_level.c_str(), "ReadCommitted") == 0)
+    else if (IsEq(isolation_level, "ReadCommitted"))
     {
         iso_level = txservice::IsolationLevel::ReadCommitted;
     }
@@ -419,15 +420,15 @@ bool RedisServiceImpl::Init(brpc::Server &brpc_server)
         return false;
     }
     // Support OCC, OccRead and Locking.
-    if (strcasecmp(cc_protocol.c_str(), "OCC") == 0)
+    if (IsEq(cc_protocol, "OCC"))
     {
         protocol = txservice::CcProtocol::OCC;
     }
-    else if (strcasecmp(cc_protocol.c_str(), "OCCRead") == 0)
+    else if (IsEq(cc_protocol, "OCCRead"))
     {
         protocol = txservice::CcProtocol::OccRead;
     }
-    else if (strcasecmp(cc_protocol.c_str(), "Locking") == 0)
+    else if (IsEq(cc_protocol, "Locking"))
     {
         protocol = txservice::CcProtocol::Locking;
     }
@@ -454,11 +455,11 @@ bool RedisServiceImpl::Init(brpc::Server &brpc_server)
                   "local", "txn_protocol", FLAGS_txn_protocol);
 
     // Support ReadCommitted and RepeatableRead.
-    if (strcasecmp(txn_iso_level.c_str(), "RepeatableRead") == 0)
+    if (IsEq(txn_iso_level, "RepeatableRead"))
     {
         txn_isolation_level_ = IsolationLevel::RepeatableRead;
     }
-    else if (strcasecmp(txn_iso_level.c_str(), "ReadCommitted") == 0)
+    else if (IsEq(txn_iso_level, "ReadCommitted"))
     {
         txn_isolation_level_ = IsolationLevel::ReadCommitted;
     }
@@ -470,15 +471,15 @@ bool RedisServiceImpl::Init(brpc::Server &brpc_server)
     }
 
     // Support OCC, OccRead and Locking.
-    if (strcasecmp(txn_protocol.c_str(), "OCC") == 0)
+    if (IsEq(txn_protocol, "OCC"))
     {
         txn_protocol_ = CcProtocol::OCC;
     }
-    else if (strcasecmp(txn_protocol.c_str(), "OCCRead") == 0)
+    else if (IsEq(txn_protocol, "OCCRead"))
     {
         txn_protocol_ = CcProtocol::OccRead;
     }
-    else if (strcasecmp(txn_protocol.c_str(), "Locking") == 0)
+    else if (IsEq(txn_protocol, "Locking"))
     {
         txn_protocol_ = CcProtocol::Locking;
     }
@@ -6058,12 +6059,6 @@ size_t RedisServiceImpl::GetRedisTableCount() const
     return redis_table_names_.size();
 }
 
-static inline bool EqualsIgnoreCase(butil::StringPiece s1, std::string_view s2)
-{
-    return s1.size() == s2.size() &&
-           strncasecmp(s1.data(), s2.data(), s2.size()) == 0;
-}
-
 bool RedisServiceImpl::AuthRequired(
     const RedisConnectionContext *ctx,
     const std::vector<butil::StringPiece> &args) const
@@ -6083,21 +6078,16 @@ bool RedisServiceImpl::AuthRequired(
     }
 
     const auto &cmd = args[0];
-    if (EqualsIgnoreCase(cmd, "auth") || EqualsIgnoreCase(cmd, "quit"))
+    if (IsEqAny(cmd, "auth", "quit", "hello", "reset"))
     {
         return false;
     }
-    else if (EqualsIgnoreCase(cmd, "hello") || EqualsIgnoreCase(cmd, "reset"))
-    {
-        return false;
-    }
-    else if (EqualsIgnoreCase(cmd, "namespace"))
+    else if (IsEq(cmd, "namespace"))
     {
         if (args.size() >= 2)
         {
             const auto &subcmd = args[1];
-            if (EqualsIgnoreCase(subcmd, "current") ||
-                EqualsIgnoreCase(subcmd, "ns_flush"))
+            if (IsEqAny(subcmd, "current", "ns_flush"))
             {
                 return false;
             }

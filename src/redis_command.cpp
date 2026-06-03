@@ -20,6 +20,7 @@
  *
  */
 #include "redis_command.h"
+#include "str.h"
 
 #include <brpc/acceptor.h>
 #include <butil/endpoint.h>
@@ -2179,22 +2180,22 @@ void ClientListCommand::OutputResult(OutputHandler *reply) const
 
 bool ClientListCommand::GetTypeByName(const char *name, Type *type)
 {
-    if (!strcasecmp(name, "normal"))
+    if (IsEq(name, "normal"))
     {
         *type = Type::NORMAL;
         return true;
     }
-    else if (!strcasecmp(name, "slave") || !strcasecmp(name, "replica"))
+    else if (IsEqAny(name, "slave", "replica"))
     {
         *type = Type::SLAVE;
         return true;
     }
-    else if (!strcasecmp(name, "pubsub"))
+    else if (IsEq(name, "pubsub"))
     {
         *type = Type::PUBSUB;
         return true;
     }
-    else if (!strcasecmp(name, "master"))
+    else if (IsEq(name, "master"))
     {
         *type = Type::MASTER;
         return true;
@@ -10694,7 +10695,7 @@ std::tuple<bool, SlowLogCommand> ParseSlowLogCommand(
         return {false, SlowLogCommand()};
     }
 
-    if (0 == strcasecmp(args[1].data(), "get"))
+    if (IsEq(args[1], "get"))
     {
         if (args.size() == 2)
         {
@@ -10704,7 +10705,7 @@ std::tuple<bool, SlowLogCommand> ParseSlowLogCommand(
         {
             try
             {
-                int len = std::stoi(args[2].data());
+                int len = std::stoi(std::string(args[2]));
                 if (len < -1)
                 {
                     output->OnError(
@@ -10727,11 +10728,11 @@ std::tuple<bool, SlowLogCommand> ParseSlowLogCommand(
             return {false, SlowLogCommand()};
         }
     }
-    else if (0 == strcasecmp(args[1].data(), "reset"))
+    else if (IsEq(args[1], "reset"))
     {
         return {true, SlowLogCommand(SLOWLOG_RESET, -1)};
     }
-    else if (0 == strcasecmp(args[1].data(), "len"))
+    else if (IsEq(args[1], "len"))
     {
         return {true, SlowLogCommand(SLOWLOG_LEN, -1)};
     }
@@ -19506,19 +19507,19 @@ std::tuple<bool, SortCommand> ParseSortCommand(
     for (size_t j = 2; j < args.size(); j++)
     {
         size_t leftargs = args.size() - j - 1;
-        if (!strcasecmp(args[j].data(), "asc"))
+        if (IsEq(args[j], "asc"))
         {
             desc = false;
         }
-        else if (!strcasecmp(args[j].data(), "desc"))
+        else if (IsEq(args[j], "desc"))
         {
             desc = true;
         }
-        else if (!strcasecmp(args[j].data(), "alpha"))
+        else if (IsEq(args[j], "alpha"))
         {
             alpha = true;
         }
-        else if (!strcasecmp(args[j].data(), "limit") && leftargs >= 2)
+        else if (IsEq(args[j], "limit") && leftargs >= 2)
         {
             if (!string2ll(args[j + 1].data(), args[j + 1].size(), limit_start))
             {
@@ -19532,18 +19533,18 @@ std::tuple<bool, SortCommand> ParseSortCommand(
             }
             j += 2;
         }
-        else if (args[0] == "sort" && !strcasecmp(args[j].data(), "store") &&
+        else if (args[0] == "sort" && IsEq(args[j], "store") &&
                  leftargs >= 1)
         {
             store_key.emplace(args[j + 1]);
             j++;
         }
-        else if (!strcasecmp(args[j].data(), "by") && leftargs >= 1)
+        else if (IsEq(args[j], "by") && leftargs >= 1)
         {
             by_pattern.emplace(args[j + 1]);
             j++;
         }
-        else if (!strcasecmp(args[j].data(), "get") && leftargs >= 1)
+        else if (IsEq(args[j], "get") && leftargs >= 1)
         {
             get_pattern_vec.emplace_back(args[j + 1]);
             j++;
