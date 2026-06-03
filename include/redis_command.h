@@ -97,6 +97,11 @@
 #define SLOWLOG_RESET (1 << 1)
 #define SLOWLOG_LEN (1 << 2)
 
+#if defined(DATA_STORE_TYPE_ELOQDSS_ROCKSDB_CLOUD_S3) ||                       \
+    defined(DATA_STORE_TYPE_ELOQDSS_ROCKSDB_CLOUD_GCS)
+#define ELOQKV_WITH_DSS_ROCKSDB_CLOUD 1
+#endif
+
 namespace EloqKV
 {
 enum struct RedisCommandType
@@ -320,6 +325,10 @@ enum struct RedisCommandType
 #endif
 
     UNLINK,
+    NAMESPACE,
+#ifdef ELOQKV_WITH_DSS_ROCKSDB_CLOUD
+    COMPACT,
+#endif
 };
 
 enum RedisResultType
@@ -772,6 +781,33 @@ struct SelectCommand : public DirectCommand
     RedisCommandResult result_;
 };
 
+struct NamespaceCommand : public DirectCommand
+{
+    NamespaceCommand() = default;
+    NamespaceCommand(std::string_view op,
+                     std::string_view ns,
+                     std::string_view token)
+        : op_(op), ns_(ns), token_(token)
+    {
+    }
+
+    void Execute(RedisServiceImpl *redis_impl,
+                 RedisConnectionContext *ctx) override;
+    void OutputResult(OutputHandler *reply) const override;
+
+    std::string op_;
+    std::string ns_;
+    std::string token_;
+
+    struct Result
+    {
+        bool success{false};
+        std::string err_msg;
+        std::string str_val;
+        std::vector<std::string> list_val;
+    } result_;
+};
+
 struct InfoCommand : public DirectCommand
 {
     InfoCommand() = default;
@@ -800,6 +836,9 @@ struct InfoCommand : public DirectCommand
     int64_t data_memory_committed_{0};
     uint64_t last_ckpt_ts_{0};
     int event_dispatcher_num_{0};
+    std::string os_info_;
+    std::string executable_path_;
+    int64_t total_system_memory_kb_{0};
     const char *version_{nullptr};
 
     int64_t conn_received_count_{0};
@@ -813,7 +852,23 @@ struct InfoCommand : public DirectCommand
     int64_t cmds_per_sec_{0};
     double cmd_latency_{0};
     std::vector<int64_t> dbsizes_;
+#ifdef ELOQKV_WITH_DSS_ROCKSDB_CLOUD
+    uint64_t store_disk_keys_{0};
+#endif
 };
+
+#ifdef ELOQKV_WITH_DSS_ROCKSDB_CLOUD
+struct CompactCommand : public DirectCommand
+{
+    CompactCommand() = default;
+
+    void Execute(RedisServiceImpl *redis_impl,
+                 RedisConnectionContext *ctx) override;
+    void OutputResult(OutputHandler *reply) const override;
+
+    bool success_{false};
+};
+#endif
 
 struct CommandCommand : public DirectCommand
 {
@@ -1164,6 +1219,10 @@ struct ReadOnlyCommand : public DirectCommand
 struct ConfigCommand : public DirectCommand
 {
     ConfigCommand() = default;
+
+    explicit ConfigCommand(int8_t flag) : flag_(flag)
+    {
+    }
 
     explicit ConfigCommand(std::vector<std::string_view> keys)
         : flag_(CONFIG_GET), keys_(keys)
@@ -7223,7 +7282,9 @@ struct DumpCommand : public RedisCommand
 
     RedisStringResult result_;
 
+    // Retained for accepting payloads produced before Redis DUMP compatibility.
     static constexpr inline uint16_t dump_version_{0};
+    static constexpr inline uint16_t redis_dump_version_{10};
 };
 
 struct RestoreCommand : public RedisCommand
@@ -7823,11 +7884,19 @@ std::tuple<bool, AuthCommand> ParseAuthCommand(
 std::tuple<bool, SelectCommand> ParseSelectCommand(
     const std::vector<std::string_view> &args, OutputHandler *output);
 
+std::tuple<bool, NamespaceCommand> ParseNamespaceCommand(
+    const std::vector<std::string_view> &args, OutputHandler *output);
+
 std::tuple<bool, ConfigCommand> ParseConfigCommand(
     const std::vector<std::string_view> &args, OutputHandler *output);
 
 std::tuple<bool, InfoCommand> ParseInfoCommand(
     const std::vector<std::string_view> &args, OutputHandler *output);
+
+#ifdef ELOQKV_WITH_DSS_ROCKSDB_CLOUD
+std::tuple<bool, CompactCommand> ParseCompactCommand(
+    const std::vector<std::string_view> &args, OutputHandler *output);
+#endif
 
 std::tuple<bool, std::unique_ptr<CommandCommand>> ParseCommandCommand(
     const std::vector<std::string_view> &args, OutputHandler *output);

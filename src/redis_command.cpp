@@ -25,6 +25,7 @@
 #include <butil/endpoint.h>
 #include <butil/logging.h>
 #include <ctype.h>
+#include <openssl/rand.h>
 #include <strings.h>
 #include <sys/times.h>
 #include <unistd.h>
@@ -33,10 +34,13 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <fstream>
+#include <iomanip>
 #include <limits>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <optional>
+#include <random>
 #include <shared_mutex>
 #include <sstream>
 #include <string>
@@ -48,12 +52,14 @@
 #include <variant>
 #include <vector>
 
+#include "b255.h"
 #include "cc/cc_entry.h"
 #include "cc/cc_shard.h"
 #include "eloq_string.h"
 #include "eloqkv_catalog_factory.h"
 #include "eloqkv_key.h"
 #include "local_cc_shards.h"
+#include "namespace/token.h"
 #include "output_handler.h"
 #include "redis/server.h"
 #include "redis_connection_context.h"
@@ -73,6 +79,7 @@
 #include "tx_command.h"
 #include "tx_request.h"
 #include "tx_service.h"
+#include "tx_util.h"
 #include "type.h"
 
 extern "C"
@@ -80,7 +87,11 @@ extern "C"
 #include "crcspeed/crc64speed.h"
 }
 
+#include <gflags/gflags.h>
+
 extern struct redisCommand redisCommandTable[];
+
+DECLARE_bool(cluster_mode);
 
 namespace EloqKV
 {
@@ -98,9 +109,13 @@ const std::vector<std::pair<const char *, RedisCommandType>> command_types{{
     {"info", RedisCommandType::INFO},
     {"cluster", RedisCommandType::CLUSTER},
     {"dbsize", RedisCommandType::DBSIZE},
+#ifdef ELOQKV_WITH_DSS_ROCKSDB_CLOUD
+    {"compact", RedisCommandType::COMPACT},
+#endif
     {"time", RedisCommandType::TIME},
     {"slowlog", RedisCommandType::SLOWLOG},
     {"select", RedisCommandType::SELECT},
+    {"namespace", RedisCommandType::NAMESPACE},
     {"config", RedisCommandType::CONFIG},
     {"ping", RedisCommandType::PING},
     {"eval", RedisCommandType::EVAL},
@@ -1480,10 +1495,28 @@ void PingCommand::Execute(RedisServiceImpl *redis_impl,
 void AuthCommand::Execute(RedisServiceImpl *redis_impl,
                           RedisConnectionContext *ctx)
 {
-    if (password_ == requirepass)
+    NamespaceToken token = NamespaceToken::FromBase64Url(password_);
+    auto ns_meta =
+        token.valid
+            ? redis_impl->GetNamespaceManager()->GetMetadataByToken(token)
+            : nullptr;
+    if (ns_meta)
     {
         result_.err_code_ = RD_OK;
         ctx->authenticated = true;
+        ctx->ns = ns_meta->ns_name;
+        ctx->ns_meta = ns_meta;
+        ctx->ns_id = NamespacePrefix::MakePrefix(
+            ns_meta->encoded_id,
+            ns_meta->epoch.load(std::memory_order_relaxed));
+    }
+    else if (password_ == requirepass)
+    {
+        result_.err_code_ = RD_OK;
+        ctx->authenticated = true;
+        ctx->ns = "default";
+        ctx->ns_id = "";
+        ctx->ns_meta = nullptr;
     }
     else
     {
@@ -1504,9 +1537,210 @@ void AuthCommand::OutputResult(OutputHandler *reply) const
     }
 }
 
+void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
+                               RedisConnectionContext *ctx)
+{
+    if (op_ == "current")
+    {
+        result_.success = true;
+        result_.str_val = ctx->ns;
+        return;
+    }
+
+    if (FLAGS_cluster_mode)
+    {
+        result_.success = false;
+        result_.err_msg =
+            "ERR forbidden to manage namespace when cluster mode was enabled";
+        return;
+    }
+
+    if (requirepass.empty())
+    {
+        result_.success = false;
+        result_.err_msg =
+            "ERR forbidden to manage namespace when requirepass was empty";
+        return;
+    }
+
+    if (!ctx->authenticated || ctx->ns != "default")
+    {
+        result_.success = false;
+        result_.err_msg =
+            "ERR only requirepass user is allowed to manage namespaces";
+        return;
+    }
+
+    auto ns_mgr = redis_impl->GetNamespaceManager();
+    if (op_ == "get")
+    {
+        if (ns_ == "*")
+        {
+            result_.success = true;
+            auto list = ns_mgr->List();
+            result_.list_val.reserve(list.size() * 2);
+            for (auto &pair : list)
+            {
+                result_.list_val.push_back(pair.second);  // namespace
+                result_.list_val.push_back(
+                    pair.first);  // token (already encoded string in map key!)
+            }
+        }
+        else
+        {
+            std::string token = ns_mgr->Get(ns_);
+            if (!token.empty())
+            {
+                result_.success = true;
+                result_.str_val = std::move(token);
+            }
+            else
+            {
+                result_.success = false;
+                result_.err_msg = "ERR namespace not found";
+            }
+        }
+    }
+    else if (op_ == "add")
+    {
+        if (ns_ == "default")
+        {
+            result_.success = false;
+            result_.err_msg = "ERR forbidden to add the default namespace";
+            return;
+        }
+        if (ns_.empty() || ns_.size() > 255)
+        {
+            result_.success = false;
+            result_.err_msg =
+                "ERR namespace length must be between 1 and 255 bytes";
+            return;
+        }
+        NamespaceToken token = GenerateRandomToken();
+        while (token.ToString() == requirepass)
+        {
+            token = GenerateRandomToken();
+        }
+        bool ok = ns_mgr->Add(ns_, token);
+        if (ok)
+        {
+            result_.success = true;
+            result_.str_val = token.ToString();
+        }
+        else
+        {
+            result_.success = false;
+            result_.err_msg = "ERR the namespace already exists";
+        }
+    }
+    else if (op_ == "refresh")
+    {
+        if (ns_ == "default")
+        {
+            result_.success = false;
+            result_.err_msg = "ERR forbidden to refresh the default namespace";
+            return;
+        }
+        if (ns_.empty() || ns_.size() > 255)
+        {
+            result_.success = false;
+            result_.err_msg =
+                "ERR namespace length must be between 1 and 255 bytes";
+            return;
+        }
+        std::string old_token = ns_mgr->Get(ns_);
+        if (old_token.empty())
+        {
+            result_.success = false;
+            result_.err_msg = "ERR namespace not found";
+            return;
+        }
+        NamespaceToken token = GenerateRandomToken();
+        while (token.ToString() == requirepass || token.ToString() == old_token)
+        {
+            token = GenerateRandomToken();
+        }
+        bool ok = ns_mgr->Set(ns_, token);
+        if (ok)
+        {
+            result_.success = true;
+            result_.str_val = token.ToString();
+        }
+        else
+        {
+            result_.success = false;
+            result_.err_msg = "ERR failed to refresh namespace token";
+        }
+    }
+    else if (op_ == "del")
+    {
+        if (ns_ == "default")
+        {
+            result_.success = false;
+            result_.err_msg = "ERR forbidden to delete the default namespace";
+        }
+        else
+        {
+            bool ok = ns_mgr->Del(ns_);
+            if (ok)
+            {
+                result_.success = true;
+            }
+            else
+            {
+                result_.success = false;
+                result_.err_msg = "ERR namespace not found";
+            }
+        }
+    }
+}
+
+void NamespaceCommand::OutputResult(OutputHandler *reply) const
+{
+    if (!result_.success)
+    {
+        reply->OnError(result_.err_msg);
+        return;
+    }
+
+    if (op_ == "current")
+    {
+        reply->OnString(result_.str_val);
+    }
+    else if (op_ == "get")
+    {
+        if (ns_ == "*")
+        {
+            reply->OnArrayStart(result_.list_val.size());
+            for (const auto &val : result_.list_val)
+            {
+                reply->OnString(val);
+            }
+            reply->OnArrayEnd();
+        }
+        else
+        {
+            reply->OnString(result_.str_val);
+        }
+    }
+    else if (op_ == "add" || op_ == "refresh")
+    {
+        reply->OnString(result_.str_val);
+    }
+    else if (op_ == "del")
+    {
+        reply->OnStatus("OK");
+    }
+}
+
 void SelectCommand::Execute(RedisServiceImpl *redis_impl,
                             RedisConnectionContext *ctx)
 {
+    if (ctx && ctx->ns != "default" && !ctx->ns.empty())
+    {
+        result_.err_code_ = RD_ERR_SELECT_FORBIDDEN_IN_NS;
+        return;
+    }
     if (db_id_ >= 0 && db_id_ < databases)
     {
         result_.err_code_ = RD_OK;
@@ -1526,8 +1760,9 @@ void SelectCommand::OutputResult(OutputHandler *reply) const
     }
     else
     {
-        assert(result_.err_code_ == RD_ERR_SELECT_OUT_OF_RANGE);
-        reply->OnError(redis_get_error_messages(RD_ERR_SELECT_OUT_OF_RANGE));
+        assert(result_.err_code_ == RD_ERR_SELECT_OUT_OF_RANGE ||
+               result_.err_code_ == RD_ERR_SELECT_FORBIDDEN_IN_NS);
+        reply->OnError(redis_get_error_messages(result_.err_code_));
     }
 }
 
@@ -1568,6 +1803,9 @@ void InfoCommand::Execute(RedisServiceImpl *redis_impl,
 
     event_dispatcher_num_ = redis_impl->GetEventDispatcherNum();
     version_ = redis_impl->GetVersion();
+    os_info_ = redis_impl->GetOsInfo();
+    executable_path_ = redis_impl->GetExecutablePath();
+    total_system_memory_kb_ = redis_impl->GetTotalSystemMemoryKB();
     max_connection_count_ = redis_impl->MaxConnectionCount();
 
     if (redis_impl->IsEnableRedisStats())
@@ -1583,6 +1821,7 @@ void InfoCommand::Execute(RedisServiceImpl *redis_impl,
         //  cmds_per_sec_ = RedisStats::GetCommandsPerSecond();
     }
 
+#ifdef ELOQKV_WITH_DSS_ROCKSDB_CLOUD
     if (set_section_.size() == 0 ||
         set_section_.find("keyspace") != set_section_.end())
     {
@@ -1596,8 +1835,33 @@ void InfoCommand::Execute(RedisServiceImpl *redis_impl,
         }
 
         dbsizes_ = DBSizeCommand::FetchDBSize(std::move(table_names));
+        auto *store_hd = redis_impl->GetStoreHandler();
+        store_disk_keys_ =
+            store_hd == nullptr ? 0 : store_hd->ApproxStoreKeyCount();
+    }
+#endif
+}
+
+#ifdef ELOQKV_WITH_DSS_ROCKSDB_CLOUD
+void CompactCommand::Execute(RedisServiceImpl *redis_impl,
+                             RedisConnectionContext *ctx)
+{
+    auto *store_hd = redis_impl->GetStoreHandler();
+    success_ = store_hd != nullptr && store_hd->CompactStore();
+}
+
+void CompactCommand::OutputResult(OutputHandler *reply) const
+{
+    if (success_)
+    {
+        reply->OnStatus(redis_get_error_messages(RD_OK));
+    }
+    else
+    {
+        reply->OnError("ERR failed to compact data store");
     }
 }
+#endif
 
 void ClusterCommand::Execute(RedisServiceImpl *redis_impl,
                              RedisConnectionContext *ctx)
@@ -1960,6 +2224,148 @@ void ClientKillCommand::OutputResult(OutputHandler *reply) const
 void DBSizeCommand::Execute(RedisServiceImpl *redis_impl,
                             RedisConnectionContext *ctx)
 {
+    if (ctx && ctx->ns != "default" && !ctx->ns.empty())
+    {
+        std::string ns_prefix = ctx->ns_id;
+        std::string ns_prefix_next = ComposeNamespaceKeyNext(ns_prefix);
+        const TableName &table_name = *redis_impl->RedisTableName(ctx->db_id);
+
+        TransactionExecution *txm = redis_impl->NewTxm(
+            IsolationLevel::RepeatableRead, CcProtocol::Locking);
+        if (txm == nullptr)
+        {
+            total_db_size_ = 0;
+            return;
+        }
+
+        CatalogKey catalog_key(table_name);
+        TxKey cat_tx_key(&catalog_key);
+        CatalogRecord catalog_rec;
+        ReadTxRequest read_req(&txservice::catalog_ccm_name,
+                               0,
+                               &cat_tx_key,
+                               &catalog_rec,
+                               false,
+                               false,
+                               true,
+                               0,
+                               false,
+                               false,
+                               false,
+                               nullptr,
+                               nullptr,
+                               txm);
+        txm->Execute(&read_req);
+        read_req.Wait();
+        if (read_req.IsError())
+        {
+            txservice::AbortTx(txm);
+            total_db_size_ = 0;
+            return;
+        }
+        uint64_t schema_version = catalog_rec.SchemaTs();
+
+        EloqKey start_key = EloqKey::Raw(ns_prefix);
+        EloqKey end_key = EloqKey::Raw(ns_prefix_next);
+
+        TxKey start_tx_key(&start_key);
+        TxKey end_tx_key(&end_key);
+
+        txservice::BucketScanSavePoint save_point;
+
+        ScanOpenTxRequest scan_open(&table_name,
+                                    schema_version,
+                                    ScanIndexType::Primary,
+                                    &start_tx_key,
+                                    true,
+                                    &end_tx_key,
+                                    false,
+                                    ScanDirection::Forward,
+                                    false,
+                                    false,
+                                    false,
+                                    false,
+                                    true,
+                                    false,
+                                    true,
+                                    false,
+                                    nullptr,
+                                    nullptr,
+                                    txm,
+                                    -1,
+                                    "",
+                                    &save_point);
+
+        txm->Execute(&scan_open);
+        scan_open.Wait();
+        bool success = !scan_open.IsError();
+        if (!success)
+        {
+            txservice::AbortTx(txm);
+            total_db_size_ = 0;
+            return;
+        }
+
+        uint64_t scan_alias = scan_open.Result();
+        if (scan_alias == UINT64_MAX)
+        {
+            txservice::AbortTx(txm);
+            total_db_size_ = 0;
+            return;
+        }
+
+        size_t current_index = 0;
+        size_t plan_size = save_point.PlanSize();
+        txservice::BucketScanPlan plan = save_point.PickPlan(current_index);
+        std::vector<txservice::ScanBatchTuple> scan_batch;
+
+        int64_t count = 0;
+
+        while (current_index < plan_size)
+        {
+            scan_batch.clear();
+            ScanBatchTxRequest scan_batch_req(scan_alias,
+                                              table_name,
+                                              &scan_batch,
+                                              nullptr,
+                                              nullptr,
+                                              txm,
+                                              -1,
+                                              "",
+                                              &plan);
+
+            txm->Execute(&scan_batch_req);
+            scan_batch_req.Wait();
+            if (scan_batch_req.IsError())
+            {
+                txservice::AbortTx(txm);
+                total_db_size_ = 0;
+                return;
+            }
+
+            for (const auto &tuple : scan_batch)
+            {
+                if (tuple.status_ == txservice::RecordStatus::Normal)
+                {
+                    count++;
+                }
+            }
+
+            if (scan_batch_req.Result())
+            {
+                current_index++;
+                if (current_index < plan_size)
+                {
+                    plan = save_point.PickPlan(current_index);
+                }
+            }
+        }
+
+        txservice::CommitTx(txm);
+        total_db_size_ = count;
+        return;
+    }
+
     std::vector<TableName> table_names;
     const TableName *tbn = redis_impl->RedisTableName(ctx->db_id);
     table_names.emplace_back(
@@ -2094,36 +2500,32 @@ void PingCommand::OutputResult(OutputHandler *reply) const
     reply->OnString(reply_value_.StringView());
 }
 
-std::string ExecCommand(const std::string &cmd)
+static uint64_t GetProcessVmRSSKb(pid_t pid)
 {
-    char line[1024];
-    FILE *fp;
-    const char *sysCommand = cmd.data();
-    if ((fp = popen(sysCommand, "r")) == NULL)
+    std::ifstream file("/proc/" + std::to_string(pid) + "/status");
+    if (!file.is_open())
     {
-        return "Failed to execute command '" + cmd + "'!";
+        return 0;
     }
 
-    std::string rst;
-    while (fgets(line, sizeof(line) - 1, fp) != NULL)
+    std::string line;
+    while (std::getline(file, line))
     {
-        if (rst.size() > 0 && *rst.rbegin() != '\n')
+        if (line.rfind("VmRSS:", 0) != 0)
         {
-            rst += "\n";
+            continue;
         }
-
-        rst += line;
+        std::istringstream iss(line);
+        std::string key;
+        uint64_t value = 0;
+        std::string unit;
+        if (iss >> key >> value >> unit)
+        {
+            return value;
+        }
+        return 0;
     }
-    pclose(fp);
-
-    if (*rst.rbegin() == '\n')
-    {
-        return rst.substr(0, rst.size() - 1);
-    }
-    else
-    {
-        return rst;
-    }
+    return 0;
 }
 
 void InfoCommand::OutputResult(OutputHandler *reply) const
@@ -2140,14 +2542,13 @@ void InfoCommand::OutputResult(OutputHandler *reply) const
         result += "\r\neloqkv_mode:";
         result += (node_count_ == 1 ? "standalone" : "cluster");
         result += "\r\nmultiplexing_api:epoll";
-        result += "\r\nos:" + ExecCommand("uname -srm");
+        result += "\r\nos:" + os_info_;
         result += "\r\nprocess_id:" + pid;
         result += "\r\ntcp_port:" + std::to_string(tcp_port_);
         result += "\r\nuptime_in_seconds:" + std::to_string(uptime_in_secs_);
         result += "\r\nuptime_in_days:" +
                   std::to_string(uptime_in_secs_ / (3600 * 24));
-        result += "\r\nexecutable:" + ExecCommand("ls -l /proc/" + pid +
-                                                  "/exe | awk '{print $11}'");
+        result += "\r\nexecutable:" + executable_path_;
         result += "\r\nconfig_file:" + config_file_;
         result += "\r\nbrpc_io_threads_active:" +
                   std::to_string(event_dispatcher_num_);
@@ -2181,11 +2582,9 @@ void InfoCommand::OutputResult(OutputHandler *reply) const
 
         result += "# Memory";
         result += "\r\nused_memory_rss:" +
-                  ExecCommand("cat /proc/" + pid +
-                              "/status | grep VmRSS | awk '{print $2}'") +
-                  " kb";
+                  std::to_string(GetProcessVmRSSKb(getpid())) + " kb";
         result += "\r\ntotal_system_memory:" +
-                  ExecCommand("free  | grep Mem | awk '{print $2}'") + " kb";
+                  std::to_string(total_system_memory_kb_) + " kb";
         result += "\r\ndata_memory_allocated:" +
                   std::to_string(data_memory_allocated_) + " kb";
         result += "\r\ndata_memory_committed:" +
@@ -2281,6 +2680,7 @@ void InfoCommand::OutputResult(OutputHandler *reply) const
         }
     }
 
+#ifdef ELOQKV_WITH_DSS_ROCKSDB_CLOUD
     if (set_section_.size() == 0 ||
         set_section_.find("keyspace") != set_section_.end())
     {
@@ -2298,7 +2698,9 @@ void InfoCommand::OutputResult(OutputHandler *reply) const
                           ":keys=" + std::to_string(dbsizes_[idx]);
             }
         }
+        result += "\r\nstore:disk_keys=" + std::to_string(store_disk_keys_);
     }
+#endif
 
     result += "\r\n";
     reply->OnString(result);
@@ -6521,7 +6923,9 @@ void SMoveCommand::OutputResult(OutputHandler *reply) const
     {
         if (cmd_dst_->result_.err_code_ == RD_OK)
         {
-            reply->OnInt(cmd_dst_->result_.ret_);
+            // SMOVE reports whether the member existed in the source. The
+            // destination may already contain it, making SADD a no-op.
+            reply->OnInt(cmd_src_->result_.ret_);
         }
         else
         {
@@ -8011,6 +8415,18 @@ ParseMultiCommand(RedisServiceImpl *redis_impl,
                 DirectRequest(ctx,
                               std::make_unique<SelectCommand>(std::move(cmd)))};
     }
+    case RedisCommandType::NAMESPACE:
+    {
+        auto [success, cmd] = ParseNamespaceCommand(args, output);
+        if (!success)
+        {
+            return {false, DirectRequest{}};
+        }
+
+        return {success,
+                DirectRequest(
+                    ctx, std::make_unique<NamespaceCommand>(std::move(cmd)))};
+    }
     case RedisCommandType::CONFIG:
     {
         auto [success, cmd] = ParseConfigCommand(args, output);
@@ -8033,6 +8449,19 @@ ParseMultiCommand(RedisServiceImpl *redis_impl,
             success,
             DirectRequest(ctx, std::make_unique<InfoCommand>(std::move(cmd)))};
     }
+#ifdef ELOQKV_WITH_DSS_ROCKSDB_CLOUD
+    case RedisCommandType::COMPACT:
+    {
+        auto [success, cmd] = ParseCompactCommand(args, output);
+        if (!success)
+        {
+            return {false, DirectRequest{}};
+        }
+        return {success,
+                DirectRequest(
+                    ctx, std::make_unique<CompactCommand>(std::move(cmd)))};
+    }
+#endif
     case RedisCommandType::CLUSTER:
     {
         auto [success, cmd] = ParseClusterCommand(args, output);
@@ -10168,6 +10597,52 @@ std::tuple<bool, SelectCommand> ParseSelectCommand(
     }
 }
 
+std::tuple<bool, NamespaceCommand> ParseNamespaceCommand(
+    const std::vector<std::string_view> &args, OutputHandler *output)
+{
+    assert(args[0] == "namespace");
+    if (args.size() < 2)
+    {
+        output->OnError(
+            "ERR NAMESPACE subcommand must be one of GET, DEL, ADD, REFRESH "
+            "and CURRENT");
+        return {false, NamespaceCommand()};
+    }
+    std::string subcommand(args[1]);
+    std::transform(subcommand.begin(),
+                   subcommand.end(),
+                   subcommand.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+
+    if (args.size() == 2 && subcommand == "current")
+    {
+        return {true, NamespaceCommand("current", "", "")};
+    }
+    else if (args.size() == 3 && subcommand == "get")
+    {
+        return {true, NamespaceCommand("get", args[2], "")};
+    }
+    else if (args.size() == 3 && subcommand == "del")
+    {
+        return {true, NamespaceCommand("del", args[2], "")};
+    }
+    else if (args.size() == 3 && subcommand == "add")
+    {
+        return {true, NamespaceCommand("add", args[2], "")};
+    }
+    else if (args.size() == 3 && subcommand == "refresh")
+    {
+        return {true, NamespaceCommand("refresh", args[2], "")};
+    }
+    else
+    {
+        output->OnError(
+            "ERR NAMESPACE subcommand must be one of GET, DEL, ADD, REFRESH "
+            "and CURRENT");
+        return {false, NamespaceCommand()};
+    }
+}
+
 std::tuple<bool, DBSizeCommand> ParseDBSizeCommand(
     const std::vector<std::string_view> &args, OutputHandler *output)
 {
@@ -10285,6 +10760,20 @@ std::tuple<bool, InfoCommand> ParseInfoCommand(
 
     return {true, InfoCommand(std::move(set_sct))};
 }
+
+#ifdef ELOQKV_WITH_DSS_ROCKSDB_CLOUD
+std::tuple<bool, CompactCommand> ParseCompactCommand(
+    const std::vector<std::string_view> &args, OutputHandler *output)
+{
+    if (args.size() != 1)
+    {
+        output->OnError("ERR wrong number of arguments for 'compact' command");
+        return {false, CompactCommand()};
+    }
+
+    return {true, CompactCommand()};
+}
+#endif
 
 std::tuple<bool, std::unique_ptr<CommandCommand>> ParseCommandCommand(
     const std::vector<std::string_view> &args, OutputHandler *output)
@@ -15452,93 +15941,26 @@ void ScanCommand::OutputResult(OutputHandler *reply,
     }
 }
 
-/**
- * +-----------+--------------------------+-------------------+------------+
- * |1 byte type|Serialized RedisEloqObject|2 byte MONO version|8 byte CRC64|
- * +-----------+--------------------------+-------------------+------------+
- *
- * MONO version and CRC are both in big endian.
- */
 txservice::ExecResult DumpCommand::ExecuteOn(const txservice::TxObject &object)
 {
     const RedisEloqObject &eloq_obj =
         dynamic_cast<const RedisEloqObject &>(object);
 
-    RedisObjectType obj_type = eloq_obj.ObjectType();
-    assert(obj_type != RedisObjectType::Unknown &&
-           obj_type != RedisObjectType::Del);
-
-    uint8_t obj_type_u8 = static_cast<uint8_t>(obj_type);
-    result_.str_.append(reinterpret_cast<const char *>(&obj_type_u8),
-                        sizeof(uint8_t));
-
-    // If object has TTL, serialize as base type (without TTL) for DUMP
-    // This matches Redis semantics where DUMP doesn't include TTL info
-    // We call the base class Serialize() method directly instead of creating
-    // a new object
-    if (eloq_obj.HasTTL())
+    if (!ConvertEloqObjectToRedisDumpPayload(eloq_obj, result_.str_))
     {
-        // Cast to base class and call base class Serialize() method
-        // ObjectType() already returns the base class type, so we can safely
-        // cast to the corresponding base class
-        switch (obj_type)
-        {
-        case RedisObjectType::String:
-        {
-            // TTLString -> String: cast to base class and call base Serialize()
-            const RedisStringObject *base_obj =
-                static_cast<const RedisStringObject *>(&eloq_obj);
-            base_obj->RedisStringObject::Serialize(result_.str_);
-            break;
-        }
-        case RedisObjectType::List:
-        {
-            // TTLList -> List: cast to base class and call base Serialize()
-            const RedisListObject *base_obj =
-                static_cast<const RedisListObject *>(&eloq_obj);
-            base_obj->RedisListObject::Serialize(result_.str_);
-            break;
-        }
-        case RedisObjectType::Hash:
-        {
-            // TTLHash -> Hash: cast to base class and call base Serialize()
-            const RedisHashObject *base_obj =
-                static_cast<const RedisHashObject *>(&eloq_obj);
-            base_obj->RedisHashObject::Serialize(result_.str_);
-            break;
-        }
-        case RedisObjectType::Zset:
-        {
-            // TTLZset -> Zset: cast to base class and call base Serialize()
-            const RedisZsetObject *base_obj =
-                static_cast<const RedisZsetObject *>(&eloq_obj);
-            base_obj->RedisZsetObject::Serialize(result_.str_);
-            break;
-        }
-        case RedisObjectType::Set:
-        {
-            // TTLSet -> Set: cast to base class and call base Serialize()
-            const RedisHashSetObject *base_obj =
-                static_cast<const RedisHashSetObject *>(&eloq_obj);
-            base_obj->RedisHashSetObject::Serialize(result_.str_);
-            break;
-        }
-        default:
-            assert(false && "Unsupported object type for TTL serialization");
-            break;
-        }
-    }
-    else
-    {
-        eloq_obj.Serialize(result_.str_);
+        result_.err_code_ = RD_ERR_SYNTAX;
+        return txservice::ExecResult::Read;
     }
 
-    result_.str_.append(reinterpret_cast<const char *>(&dump_version_),
-                        sizeof(dump_version_));
+    result_.str_.append(reinterpret_cast<const char *>(&redis_dump_version_),
+                        sizeof(redis_dump_version_));
 
-    uint64_t crc64 =
-        crc64speed_big(0, result_.str_.data(), result_.str_.size());
-    result_.str_.append(reinterpret_cast<const char *>(&crc64), sizeof(crc64));
+    uint64_t checksum = crc64(0, result_.str_.data(), result_.str_.size());
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    checksum = __builtin_bswap64(checksum);
+#endif
+    result_.str_.append(reinterpret_cast<const char *>(&checksum),
+                        sizeof(checksum));
 
     result_.err_code_ = RD_OK;
 
