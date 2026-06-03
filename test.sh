@@ -22,7 +22,7 @@ run_test() {
     ./sh/build_then_test.sh "$@"
 }
 
-run_test "$@"
+exec run_test "$@"
 # if [ $# -eq 0 ]; then
 #   run_test -DWITH_DATA_STORE=ROCKSDB
 # fi
