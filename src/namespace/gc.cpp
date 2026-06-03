@@ -47,9 +47,10 @@ void NamespaceGc::RunDaemon()
     LOG(INFO) << "Namespace GC daemon started.";
     while (!server_->IsStopping())
     {
-        // In cluster mode, namespace metadata and GC logs are replicated globally.
-        // Only the leader of node group 0 is responsible for scanning and cleaning
-        // up GC records to prevent redundant executions and transaction conflicts.
+        // In cluster mode, namespace metadata and GC logs are replicated
+        // globally. Only the leader of node group 0 is responsible for scanning
+        // and cleaning up GC records to prevent redundant executions and
+        // transaction conflicts.
         if (FLAGS_cluster_mode)
         {
             if (!server_->IsLeader())

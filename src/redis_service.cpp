@@ -820,6 +820,7 @@ struct NsFlushArgs
 {
     RedisServiceImpl *service;
     std::string ns;
+    std::string requirepass;
 };
 
 static void *DoBroadcastNsFlush(void *arg)
@@ -856,19 +857,17 @@ static void *DoBroadcastNsFlush(void *arg)
             {
                 brpc::RedisRequest request;
                 bool ok = false;
-                if (!requirepass.empty())
+                butil::StringPiece components[4];
+                components[0] = "NAMESPACE";
+                components[1] = NamespaceCommand::kOpNsFlush;
+                components[2] = args->ns;
+                size_t num_components = 3;
+                if (!args->requirepass.empty())
                 {
-                    ok = request.AddCommand("NAMESPACE %s %s %s",
-                                            NamespaceCommand::kOpNsFlush,
-                                            args->ns.c_str(),
-                                            requirepass.c_str());
+                    components[3] = args->requirepass;
+                    num_components = 4;
                 }
-                else
-                {
-                    ok = request.AddCommand("NAMESPACE %s %s",
-                                            NamespaceCommand::kOpNsFlush,
-                                            args->ns.c_str());
-                }
+                ok = request.AddCommandByComponents(components, num_components);
 
                 if (ok)
                 {
@@ -877,8 +876,8 @@ static void *DoBroadcastNsFlush(void *arg)
                     channel.CallMethod(NULL, &cntl, &request, &response, NULL);
                     if (cntl.Failed())
                     {
-                        LOG(WARNING) << "Failed to send NS flush to " << endpoint
-                                     << ": " << cntl.ErrorText();
+                        LOG(WARNING) << "Failed to send NS flush to "
+                                     << endpoint << ": " << cntl.ErrorText();
                     }
                 }
             }
@@ -894,7 +893,7 @@ void RedisServiceImpl::BroadcastNsFlush(std::string_view ns)
         return;
     }
 
-    NsFlushArgs *args = new NsFlushArgs{this, std::string(ns)};
+    NsFlushArgs *args = new NsFlushArgs{this, std::string(ns), requirepass};
     bthread_t tid;
     if (bthread_start_background(&tid, nullptr, DoBroadcastNsFlush, args) != 0)
     {
@@ -6001,7 +6000,10 @@ bool RedisServiceImpl::AuthRequired(
     if (cmd_name == "namespace" && args.size() >= 2)
     {
         std::string subcommand(args[1].data(), args[1].size());
-        std::transform(subcommand.begin(), subcommand.end(), subcommand.begin(), ::tolower);
+        std::transform(subcommand.begin(),
+                       subcommand.end(),
+                       subcommand.begin(),
+                       ::tolower);
         if (subcommand == "current" || subcommand == "ns_flush")
         {
             return false;

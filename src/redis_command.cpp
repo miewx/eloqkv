@@ -22,8 +22,6 @@
 #include "redis_command.h"
 
 #include <brpc/acceptor.h>
-#include <brpc/channel.h>
-#include <brpc/redis.h>
 #include <butil/endpoint.h>
 #include <butil/logging.h>
 #include <ctype.h>
@@ -1674,7 +1672,6 @@ void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
         {
             result_.success = true;
             result_.str_val = token.ToString();
-            redis_impl->BroadcastNsFlush(ns_);
         }
         else
         {
@@ -1695,7 +1692,6 @@ void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
             if (ok)
             {
                 result_.success = true;
-                redis_impl->BroadcastNsFlush(ns_);
             }
             else
             {
@@ -1703,6 +1699,11 @@ void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
                 result_.err_msg = "ERR namespace not found";
             }
         }
+    }
+
+    if (result_.success && (op_ == "refresh" || op_ == "del"))
+    {
+        redis_impl->BroadcastNsFlush(ns_);
     }
 }
 
@@ -10645,7 +10646,8 @@ std::tuple<bool, NamespaceCommand> ParseNamespaceCommand(
     {
         return {true, NamespaceCommand("refresh", args[2], "")};
     }
-    else if ((args.size() == 3 || args.size() == 4) && subcommand == NamespaceCommand::kOpNsFlush)
+    else if ((args.size() == 3 || args.size() == 4) &&
+             subcommand == NamespaceCommand::kOpNsFlush)
     {
         std::string_view token = (args.size() == 4) ? args[3] : "";
         return {true,
