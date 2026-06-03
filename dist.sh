@@ -8,7 +8,7 @@ cd "$DIR"
 # 1. Get the current branch name
 CURRENT_BRANCH=$(git branch --show-current)
 if [ -z "$CURRENT_BRANCH" ]; then
-    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+  CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 fi
 
 PURE_BRANCH="${CURRENT_BRANCH}_pure"
@@ -16,23 +16,23 @@ TMP_DIR="${DIR}/tmp/eloqkv_pure"
 
 # Cleanup function to be run on exit or error
 cleanup() {
-    echo "Cleaning up worktree..."
-    cd "$DIR"
-    if git worktree list | grep -q "$TMP_DIR"; then
-        git worktree remove -f "$TMP_DIR" || true
-    fi
-    if [ -d "$TMP_DIR" ]; then
-        rm -rf "$TMP_DIR" || true
-    fi
+  echo "Cleaning up worktree..."
+  cd "$DIR"
+  if git worktree list | grep -q "$TMP_DIR"; then
+    git worktree remove -f "$TMP_DIR" || true
+  fi
+  if [ -d "$TMP_DIR" ]; then
+    rm -rf "$TMP_DIR" || true
+  fi
 }
 trap cleanup EXIT
 
 # Clean up any stale worktree using the same branch or directory
 git worktree list | grep "\[$PURE_BRANCH\]" | awk '{print $1}' | while read -r wt_path; do
-    git worktree remove -f "$wt_path" || true
+  git worktree remove -f "$wt_path" || true
 done
 if [ -d "$TMP_DIR" ]; then
-    rm -rf "$TMP_DIR" || true
+  rm -rf "$TMP_DIR" || true
 fi
 git worktree prune || true
 
@@ -44,7 +44,7 @@ set +x
 # 3. Go to the worktree directory and delete *.sh and sh directory
 cd "$TMP_DIR"
 rm -f *.sh
-rm -rf sh
+rm -rf sh .mise.toml
 
 # 4. Squash all changes between this branch and main into a single commit using soft reset
 git reset --soft main
@@ -65,10 +65,10 @@ git push origin "$PURE_BRANCH" --force
 cd "$DIR"
 # Remove worktree first so we can delete the branch
 if git worktree list | grep -q "$TMP_DIR"; then
-    git worktree remove -f "$TMP_DIR" || true
+  git worktree remove -f "$TMP_DIR" || true
 fi
 if [ -d "$TMP_DIR" ]; then
-    rm -rf "$TMP_DIR" || true
+  rm -rf "$TMP_DIR" || true
 fi
 
 git branch -D "$PURE_BRANCH" || true
