@@ -856,18 +856,17 @@ bool RedisServiceImpl::BroadcastNsFlush(const std::string &ns)
         return true;
     }
 
-    std::vector<std::unique_ptr<brpc::Channel>> channels;
-    std::vector<std::string> peer_endpoints;
-    std::vector<std::unique_ptr<brpc::Controller>> controllers;
-    std::vector<std::unique_ptr<brpc::RedisRequest>> requests;
-    std::vector<std::unique_ptr<brpc::RedisResponse>> responses;
+    struct PeerCall
+    {
+        std::string endpoint;
+        std::unique_ptr<brpc::Channel> channel;
+        std::unique_ptr<brpc::Controller> controller;
+        std::unique_ptr<brpc::RedisRequest> request;
+        std::unique_ptr<brpc::RedisResponse> response;
+    };
 
-    size_t num_peers = peer_endpoints_to_call.size();
-    channels.reserve(num_peers);
-    peer_endpoints.reserve(num_peers);
-    controllers.reserve(num_peers);
-    requests.reserve(num_peers);
-    responses.reserve(num_peers);
+    std::vector<PeerCall> peer_calls;
+    peer_calls.reserve(peer_endpoints_to_call.size());
 
     bool success = true;
 
@@ -907,11 +906,13 @@ bool RedisServiceImpl::BroadcastNsFlush(const std::string &ns)
                                     response.get(),
                                     brpc::DoNothing());
 
-                channels.push_back(std::move(channel));
-                peer_endpoints.push_back(endpoint);
-                controllers.push_back(std::move(controller));
-                requests.push_back(std::move(request));
-                responses.push_back(std::move(response));
+                peer_calls.push_back(PeerCall{
+                    endpoint,
+                    std::move(channel),
+                    std::move(controller),
+                    std::move(request),
+                    std::move(response)
+                });
             }
             else
             {
@@ -928,24 +929,24 @@ bool RedisServiceImpl::BroadcastNsFlush(const std::string &ns)
         }
     }
 
-    for (size_t i = 0; i < controllers.size(); ++i)
+    for (auto &call : peer_calls)
     {
-        brpc::Join(controllers[i]->call_id());
-        if (controllers[i]->Failed())
+        brpc::Join(call.controller->call_id());
+        if (call.controller->Failed())
         {
             LOG(WARNING) << "Failed to send NS flush asynchronously to peer "
-                         << peer_endpoints[i] << ": "
-                         << controllers[i]->ErrorText();
+                         << call.endpoint << ": "
+                         << call.controller->ErrorText();
             success = false;
         }
         else
         {
-            const auto &res = *responses[i];
+            const auto &res = *call.response;
             if (res.reply_size() == 0)
             {
                 LOG(WARNING)
                     << "Received empty redis response for NS flush from peer "
-                    << peer_endpoints[i];
+                    << call.endpoint;
                 success = false;
             }
             else
@@ -954,7 +955,7 @@ bool RedisServiceImpl::BroadcastNsFlush(const std::string &ns)
                 if (reply.is_error())
                 {
                     LOG(WARNING)
-                        << "NS flush failed on peer " << peer_endpoints[i]
+                        << "NS flush failed on peer " << call.endpoint
                         << " with error: " << reply.error_message();
                     success = false;
                 }
@@ -963,7 +964,7 @@ bool RedisServiceImpl::BroadcastNsFlush(const std::string &ns)
                     if (reply.data() != "OK")
                     {
                         LOG(WARNING)
-                            << "NS flush failed on peer " << peer_endpoints[i]
+                            << "NS flush failed on peer " << call.endpoint
                             << " with response: " << reply.data();
                         success = false;
                     }
@@ -971,7 +972,7 @@ bool RedisServiceImpl::BroadcastNsFlush(const std::string &ns)
                 else
                 {
                     LOG(WARNING)
-                        << "NS flush failed on peer " << peer_endpoints[i]
+                        << "NS flush failed on peer " << call.endpoint
                         << " with unexpected response type: "
                         << brpc::RedisReplyTypeToString(reply.type());
                     success = false;
