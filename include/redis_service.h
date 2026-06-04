@@ -189,7 +189,7 @@ public:
 
     bool IsLeader(uint32_t ng_id = 0) const;
 
-    void BroadcastNsFlush(std::string ns);
+    bool BroadcastNsFlush(const std::string &ns);
 
     // Get all replica node status of node groups.
     // nodes_info is as: map{ng_id,[nodes_info,...]}

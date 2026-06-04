@@ -818,17 +818,43 @@ bool RedisServiceImpl::IsLeader(uint32_t ng_id) const
            txservice::Sharder::Instance().LeaderNodeId(ng_id);
 }
 
-struct NsFlushArgs
+bool RedisServiceImpl::BroadcastNsFlush(const std::string &ns)
 {
-    std::string ns;
-    std::string requirepass;
-    bool enable_tls;
-    std::vector<std::string> peer_endpoints;
-};
+    if (!FLAGS_cluster_mode)
+    {
+        return true;
+    }
 
-static void *DoBroadcastNsFlush(void *arg)
-{
-    std::unique_ptr<NsFlushArgs> args(static_cast<NsFlushArgs *>(arg));
+    auto node_id = txservice::Sharder::Instance().NodeId();
+    auto ng_configs = txservice::Sharder::Instance().GetNodeGroupConfigs();
+    std::unordered_set<uint32_t> visited_nodes;
+    std::vector<std::string> peer_endpoints_to_call;
+
+    for (const auto &[ng_id, nodes] : ng_configs)
+    {
+        for (const auto &node : nodes)
+        {
+            if (node.node_id_ == node_id)
+            {
+                continue;  // Skip self
+            }
+            if (visited_nodes.count(node.node_id_))
+            {
+                continue;  // Skip already visited node
+            }
+            visited_nodes.insert(node.node_id_);
+
+            std::string endpoint =
+                node.host_name_ + ":" +
+                std::to_string(RedisServiceImpl::TxPortToRedisPort(node.port_));
+            peer_endpoints_to_call.push_back(std::move(endpoint));
+        }
+    }
+
+    if (peer_endpoints_to_call.empty())
+    {
+        return true;
+    }
 
     std::vector<std::unique_ptr<brpc::Channel>> channels;
     std::vector<std::string> peer_endpoints;
@@ -836,20 +862,22 @@ static void *DoBroadcastNsFlush(void *arg)
     std::vector<std::unique_ptr<brpc::RedisRequest>> requests;
     std::vector<std::unique_ptr<brpc::RedisResponse>> responses;
 
-    size_t num_peers = args->peer_endpoints.size();
+    size_t num_peers = peer_endpoints_to_call.size();
     channels.reserve(num_peers);
     peer_endpoints.reserve(num_peers);
     controllers.reserve(num_peers);
     requests.reserve(num_peers);
     responses.reserve(num_peers);
 
-    for (const auto &endpoint : args->peer_endpoints)
+    bool success = true;
+
+    for (const auto &endpoint : peer_endpoints_to_call)
     {
         auto channel = std::make_unique<brpc::Channel>();
         brpc::ChannelOptions options;
         options.protocol = brpc::PROTOCOL_REDIS;
         options.timeout_ms = 500;
-        if (args->enable_tls)
+        if (enable_tls_)
         {
             options.mutable_ssl_options();
         }
@@ -860,11 +888,11 @@ static void *DoBroadcastNsFlush(void *arg)
             butil::StringPiece components[4];
             components[0] = "NAMESPACE";
             components[1] = NamespaceCommand::kOpNsFlush;
-            components[2] = args->ns;
+            components[2] = ns;
             size_t num_components = 3;
-            if (!args->requirepass.empty())
+            if (!requirepass.empty())
             {
-                components[3] = args->requirepass;
+                components[3] = requirepass;
                 num_components = 4;
             }
 
@@ -885,10 +913,16 @@ static void *DoBroadcastNsFlush(void *arg)
                 requests.push_back(std::move(request));
                 responses.push_back(std::move(response));
             }
+            else
+            {
+                LOG(WARNING) << "Failed to add command components for NS flush to " << endpoint;
+                success = false;
+            }
         }
         else
         {
             LOG(WARNING) << "Failed to initialize brpc channel to " << endpoint;
+            success = false;
         }
     }
 
@@ -900,6 +934,7 @@ static void *DoBroadcastNsFlush(void *arg)
             LOG(WARNING) << "Failed to send NS flush asynchronously to peer "
                          << peer_endpoints[i] << ": "
                          << controllers[i]->ErrorText();
+            success = false;
         }
         else
         {
@@ -909,6 +944,7 @@ static void *DoBroadcastNsFlush(void *arg)
                 LOG(WARNING)
                     << "Received empty redis response for NS flush from peer "
                     << peer_endpoints[i];
+                success = false;
             }
             else
             {
@@ -918,6 +954,7 @@ static void *DoBroadcastNsFlush(void *arg)
                     LOG(WARNING)
                         << "NS flush failed on peer " << peer_endpoints[i]
                         << " with error: " << reply.error_message();
+                    success = false;
                 }
                 else if (reply.is_string())
                 {
@@ -926,6 +963,7 @@ static void *DoBroadcastNsFlush(void *arg)
                         LOG(WARNING)
                             << "NS flush failed on peer " << peer_endpoints[i]
                             << " with response: " << reply.data();
+                        success = false;
                     }
                 }
                 else
@@ -934,59 +972,13 @@ static void *DoBroadcastNsFlush(void *arg)
                         << "NS flush failed on peer " << peer_endpoints[i]
                         << " with unexpected response type: "
                         << brpc::RedisReplyTypeToString(reply.type());
+                    success = false;
                 }
             }
         }
     }
-    return nullptr;
-}
 
-void RedisServiceImpl::BroadcastNsFlush(std::string ns)
-{
-    if (!FLAGS_cluster_mode)
-    {
-        return;
-    }
-
-    auto node_id = txservice::Sharder::Instance().NodeId();
-    auto ng_configs = txservice::Sharder::Instance().GetNodeGroupConfigs();
-    std::unordered_set<uint32_t> visited_nodes;
-    std::vector<std::string> peer_endpoints;
-
-    for (const auto &[ng_id, nodes] : ng_configs)
-    {
-        for (const auto &node : nodes)
-        {
-            if (node.node_id_ == node_id)
-            {
-                continue;  // Skip self
-            }
-            if (visited_nodes.count(node.node_id_))
-            {
-                continue;  // Skip already visited node
-            }
-            visited_nodes.insert(node.node_id_);
-
-            std::string endpoint =
-                node.host_name_ + ":" +
-                std::to_string(RedisServiceImpl::TxPortToRedisPort(node.port_));
-            peer_endpoints.push_back(std::move(endpoint));
-        }
-    }
-
-    if (peer_endpoints.empty())
-    {
-        return;
-    }
-
-    NsFlushArgs *args = new NsFlushArgs{
-        std::move(ns), requirepass, enable_tls_, std::move(peer_endpoints)};
-    bthread_t tid;
-    if (bthread_start_background(&tid, nullptr, DoBroadcastNsFlush, args) != 0)
-    {
-        LOG(ERROR) << "Failed to start background bthread for BroadcastNsFlush";
-        delete args;
-    }
+    return success;
 }
 
 void RedisServiceImpl::GetReplicaNodesStatus(

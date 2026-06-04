@@ -26,7 +26,7 @@ trap cleanup EXIT
 echo "Waiting for eloqkv to be ready..."
 READY=false
 for i in {1..20}; do
-  if (echo -en "PING\r\n" | nc 127.0.0.1 6379 | grep -q +PONG); then
+  if (python3 -c "import socket; s=socket.socket(); s.settimeout(0.5); s.connect(('127.0.0.1', 6379)); s.sendall(b'PING\r\n'); print(s.recv(1024).decode())" 2>/dev/null | grep -q +PONG); then
     echo "eloqkv server is ready!"
     READY=true
     break
