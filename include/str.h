@@ -1,11 +1,11 @@
 #pragma once
 
 #include <butil/strings/string_piece.h>
+#include <strings.h>
 
 #include <cstring>
 #include <string>
 #include <string_view>
-#include <strings.h>
 #include <utility>
 
 static inline bool IsEq(butil::StringPiece s1, std::string_view s2)

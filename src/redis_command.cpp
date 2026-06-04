@@ -1718,7 +1718,8 @@ void NamespaceCommand::Execute(RedisServiceImpl *redis_impl,
         if (!redis_impl->BroadcastNsFlush(ns_))
         {
             result_.success = false;
-            result_.err_msg = "ERR failed to propagate namespace flush to all cluster nodes";
+            result_.err_msg =
+                "ERR failed to propagate namespace flush to all cluster nodes";
         }
     }
 }

@@ -915,7 +915,9 @@ bool RedisServiceImpl::BroadcastNsFlush(const std::string &ns)
             }
             else
             {
-                LOG(WARNING) << "Failed to add command components for NS flush to " << endpoint;
+                LOG(WARNING)
+                    << "Failed to add command components for NS flush to "
+                    << endpoint;
                 success = false;
             }
         }
